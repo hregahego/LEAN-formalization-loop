@@ -3,13 +3,12 @@
 Turn a natural-language proof sketch into a fully verified **Lean 4 + Mathlib**
 formalization, autonomously.
 
-You write one file — a problem statement and a detailed proof sketch. The
-pipeline scaffolds a Lean project, freezes the definitions and theorem
-statements, and then runs a Plan → Workers → Review loop of AI agents that fill
+Given a proof sketch, the pipeline scaffolds a Lean project, freezes the definitions and theorem
+statements, and then runs a Plan → Workers → Review loop of agents that fill
 in every proof until the whole development compiles with no `sorry` and clean
 `#print axioms`.
 
-Every agent in the pipeline is a headless coding-agent CLI subprocess
+Every agent in the pipeline is a headless CLI subprocess
 (Claude Code or Codex); the Python scripts only orchestrate them and parse the
 shared markdown files that the agents read and write. There are no runtime
 dependencies beyond Python's standard library and the agent CLI you choose.
@@ -36,63 +35,58 @@ every step, spell out:
 - **Why each step follows from the previous ones.**
 
 If a step is vague, the agent will either mis-model it or stall. Gaps in the
-mathematics become gaps (or, worse, subtle unfaithfulness) in the formalization.
+mathematics become gaps or unfaithfulness in the formalization.
 Treat writing the sketch as writing the proof: if a human mathematician reading
 only your sketch could not reconstruct the full argument, neither can the
 pipeline. See [`reference/SKETCH.md`](reference/SKETCH.md) for the expected
-shape, and [`reference/`](reference/) for a complete worked example.
+shape.
 
 ---
 
 ## Requirements
 
-- **Python 3.9+** — standard library only, nothing to `pip install`.
-- **A coding-agent CLI**, one of:
+- **Python 3.9+**
+- **Coding-agent CLI**
   - [Claude Code](https://claude.com/claude-code) (`claude`) — the default, or
-  - [Codex](https://github.com/openai/codex) (`codex`) — set `agent_cli: "codex"`.
-- **Lean 4 toolchain** via [`elan`](https://github.com/leanprover/elan), which
-  provides `lake`. `init.py` runs `lake new` and fetches Mathlib for you, so a
-  first run downloads and builds the Mathlib cache (slow the first time).
-- Enough time and patience: hard problems are meant to run for long,
-  unattended sessions.
+  - [Codex](https://github.com/openai/codex) (`codex`) — set `agent_cli: "codex"`
+- **Lean 4 toolchain** via [`elan`](https://github.com/leanprover/elan) 
 
 ## Install
 
 ```bash
-git clone <this-repo-url> formalization
-cd formalization
+git clone https://github.com/hregahego/LEAN-formalization-loop.git 
+cd LEAN-formalization-loop
 ```
 
-That's it — the scripts run in place. Make sure your chosen agent CLI is on your
+The scripts are run from within the directory. Make sure your chosen agent CLI is on your
 `PATH` (or set `claude_bin` / `codex_bin` in `config.json`) and that you are
-logged in to it.
+logged in.
 
 ## Quick start
 
 ```
 your-problem-dir/
-  SKETCH.md          <-- YOU provide this: problem statement + complete proof sketch
+  SKETCH.md          <-- problem statement + complete proof sketch
 ```
 
 ```bash
 # 1. Scaffold the orchestration files from SKETCH.md
-python3 setup.py  your-problem-dir
+python3 setup.py your-problem-dir
 
 # 2. Create the Lean project + freeze Defs.lean / Theorems.lean (Step -1)
-python3 init.py   your-problem-dir
+python3 init.py your-problem-dir
 
 # 3. Run the autonomous Plan -> 4 Workers -> Review loop until complete
-python3 loop.py   your-problem-dir
+python3 loop.py your-problem-dir
 ```
 
 The directory argument defaults to `.`, so you can also `cd your-problem-dir`
 and run `python3 /path/to/setup.py` etc.
 
 `setup.py` derives the format (BLUEPRINT/PROGRESS/scripts layout, the
-frozen-statement + SHA-pin + `#print axioms` anti-cheat regime) from a worked
-**reference project**. A complete, hand-built example is bundled in
-[`reference/`](reference/), so the repo is self-contained; point
-`reference_dir` in `config.json` at your own example to override it.
+frozen-statement + SHA-pin + `#print axioms` anti-cheat regime) from a blank 
+**reference project**. This reference is contained in
+[`reference/`](reference/).
 
 ### What each step produces
 
@@ -127,9 +121,7 @@ each definition and theorem against `SKETCH.md` (math truth) and `BLUEPRINT.md`
 
 If it finds defects, a **bounded repair loop** runs a fix-and-re-freeze agent
 (legitimate here, since nothing is proved yet — re-freezing updates the SHA
-pins), then re-audits. If the gate cannot be made to pass within
-`--max-faithfulness-attempts` (default 2), `init.py` **exits non-zero** so the
-unfaithful skeleton is never handed to `loop.py`.
+pins), then re-audits. 
 
 - `--no-repair` — audit only; report defects without auto-fixing.
 - `--max-faithfulness-attempts N` — audit/repair rounds (default 2).
@@ -319,20 +311,6 @@ and saved under `your-problem-dir/logs/orchestration/<label>.log`.
 | `config.json` | pipeline configuration (see above) |
 | `reference/` | the bundled worked example whose format is copied |
 
-## Contributing
-
-Issues and pull requests are welcome. Because the pipeline is prompt- and
-format-driven, the most valuable contributions are usually:
-
-- new **reference projects** demonstrating the format on different kinds of
-  mathematics,
-- improvements to the anti-cheat harness (`reference/scripts/verify.sh`), and
-- bug fixes to the orchestration scripts.
-
-When changing the orchestration, `--dry-run` lets you inspect the exact prompts
-and commands without spending agent time.
-
 ## License
 
-_No license file is checked in yet._ Add a `LICENSE` file (e.g. MIT or Apache-2.0)
-before publishing so downstream users know their rights, then link it here.
+Released under the [MIT License](LICENSE).
