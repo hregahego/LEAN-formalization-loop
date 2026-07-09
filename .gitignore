@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Editor / assistant local runtime artifacts (machine-specific; not part of the repo)
+.claude/
+.antigravitycli/
+
+# Anything a user runs the pipeline on may drop logs here if they point a
+# target inside the repo; never commit run output.
+logs/

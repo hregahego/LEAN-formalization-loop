@@ -1,0 +1,19 @@
+{
+  "agent_cli": "claude",
+  "claude_bin": "claude",
+  "codex_bin": "codex",
+  "model": null,
+  "reference_dir": "reference",
+  "permission_mode": "skip",
+  "stall_window": 16,
+  "crux_recur_limit": 16,
+  "timeouts": {
+    "setup": 3600,
+    "init": 10800,
+    "plan": 10800,
+    "worker": 10800,
+    "review": 10800
+  },
+  "codex_extra_args": [],
+  "claude_extra_args": []
+}
