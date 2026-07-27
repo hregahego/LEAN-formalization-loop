@@ -482,12 +482,33 @@ def main() -> int:
         else:
             agents = F.plan_active_agents(plan_result, tasks_path, n)
             if not agents:
-                # No assignments => the Plan agent found no productive,
-                # dependency-respecting work left. Because every agent is a fresh
-                # context-free session, the NEXT iteration would be identical: the
-                # loop is stuck on a wall that needs human intervention (a new
-                # strategy, a USER_NOTES.md certificate, or a relaxed plan). Stop
-                # gracefully now rather than spinning no-op iterations forever.
+                # No workers assigned — but for two very different reasons: either
+                # every frozen theorem is ALREADY discharged (the deliverable is
+                # DONE), or the Plan agent hit a wall it cannot get past (STUCK).
+                # Distinguish them by the objective progress signal, so a finished
+                # run is reported COMPLETE instead of being mislabeled as stuck.
+                signal = F.progress_signal(target)
+                n_frozen = len(F._solution_frozen_names(target))
+                if n_frozen > 0 and signal >= n_frozen:
+                    # DONE: all frozen theorems are discharged in Solution.lean.
+                    # Confirm with a full-project audit, then report COMPLETE.
+                    F.log(f"loop: Plan assigned no workers and all {n_frozen} frozen "
+                          "theorems are discharged — running final audit to confirm "
+                          "COMPLETE (not stuck).")
+                    final = run_review(target, n, full=True, model=args.model,
+                                       dry_run=False, log_dir=log_dir)
+                    if F.review_verdict(final, review_path, n) == "COMPLETE":
+                        F.log("FORMALIZATION COMPLETE. Final findings in REVIEW.md.")
+                        F.log("Run scripts/verify.sh to confirm independently.")
+                        return 0
+                    F.log("loop: all frozen theorems discharged, but the final audit "
+                          "did NOT confirm COMPLETE — treating as STUCK; inspect REVIEW.md.")
+                    return 3
+                # STUCK: a genuine wall. Because every agent is a fresh, context-free
+                # session, the NEXT iteration would be identical, so stop gracefully
+                # now rather than spinning no-op iterations forever. Needs human
+                # intervention (a new strategy, a USER_NOTES.md certificate, or a
+                # relaxed plan).
                 F.log(f"loop: Plan agent assigned NO workers for iteration {n} — "
                       "the loop is STUCK (no productive work left).")
                 F.log("loop: stopping. Inspect REVIEW.md (latest 'Required "
