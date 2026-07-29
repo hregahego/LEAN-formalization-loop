@@ -36,10 +36,10 @@ What it does:
 Note: a cold Mathlib `lake exe cache get` + build can take a long time; the
 default timeout is config.json timeouts.init (2h). Increase it if needed.
 
-Flags:
-    --no-repair                  audit only; do not auto-fix/re-freeze on defects
-    --max-faithfulness-attempts  audit/repair rounds before giving up (default 2)
-    --skip-faithfulness-review   skip the gate entirely (not recommended)
+The faithfulness gate audits the frozen Defs/Theorems and, on defects, runs a
+bounded fix-and-re-freeze repair loop (up to MAX_FAITHFULNESS_ATTEMPTS rounds).
+If it cannot be made to pass, init exits non-zero so loop.py is never run on an
+unfaithful skeleton.
 
 Next step after this:  python3 loop.py TARGET_DIR
 """
@@ -50,6 +50,10 @@ import argparse
 import os
 
 import formlib as F
+
+
+# Audit/repair rounds the faithfulness gate runs before giving up.
+MAX_FAITHFULNESS_ATTEMPTS = 2
 
 
 PROMPT = """\
@@ -252,7 +256,7 @@ def faithfulness_verdict(result: F.AgentResult) -> str | None:
     return None
 
 
-def run_faithfulness_gate(target, model, log_dir, *, max_attempts, repair_enabled) -> bool:
+def run_faithfulness_gate(target, model, log_dir, *, max_attempts) -> bool:
     """
     Independent audit of the frozen Defs/Theorems, with a bounded repair loop.
     Returns True iff the audit confirms FAITHFUL.
@@ -274,10 +278,6 @@ def run_faithfulness_gate(target, model, log_dir, *, max_attempts, repair_enable
                   "(no/garbled trailer). Inspect REVIEW.md before running loop.py.")
             return False
         # UNFAITHFUL
-        if not repair_enabled:
-            F.log("init: faithfulness audit found defects and --no-repair is set. "
-                  "See the latest REVIEW.md audit block.")
-            return False
         if attempt == max_attempts:
             break
         F.log(f"init: faithfulness audit found defects — running freeze-repair "
@@ -298,12 +298,6 @@ def main() -> int:
     ap.add_argument("target", nargs="?", default=".", help="target directory (default: .)")
     ap.add_argument("--model", default=None, help="override the claude model")
     ap.add_argument("--dry-run", action="store_true", help="print the prompt/command, do not call claude")
-    ap.add_argument("--no-repair", action="store_true",
-                    help="faithfulness gate audits only; do not auto-fix/re-freeze on defects")
-    ap.add_argument("--max-faithfulness-attempts", type=int, default=2,
-                    help="audit/repair rounds before giving up (default 2)")
-    ap.add_argument("--skip-faithfulness-review", action="store_true",
-                    help="skip the Defs/Theorems faithfulness gate entirely (not recommended)")
     args = ap.parse_args()
 
     target = F.resolve_target(args.target)
@@ -323,9 +317,8 @@ def main() -> int:
     log_dir = os.path.join(target, "logs", "orchestration")
 
     if args.dry_run:
-        if not args.skip_faithfulness_review:
-            F.run_agent("init-faithfulness-review", FAITHFULNESS_REVIEW_PROMPT,
-                        cwd=target, model=args.model, log_dir=log_dir, dry_run=True)
+        F.run_agent("init-faithfulness-review", FAITHFULNESS_REVIEW_PROMPT,
+                    cwd=target, model=args.model, log_dir=log_dir, dry_run=True)
         return 0
 
     pins = F.read_text(os.path.join(target, "scripts", "frozen.sha256"))
@@ -338,21 +331,17 @@ def main() -> int:
     F.log("init: Lean skeleton frozen, SHA pins recorded.")
 
     # --- Faithfulness gate: audit (and bounded-repair) the frozen Defs/Theorems ---
-    if args.skip_faithfulness_review:
-        F.log("init: SKIPPING faithfulness review (--skip-faithfulness-review).")
-    else:
-        F.log("init: running the Defs/Theorems faithfulness gate "
-              "(the key anti-cheat checkpoint).")
-        faithful = run_faithfulness_gate(
-            target, args.model, log_dir,
-            max_attempts=max(1, args.max_faithfulness_attempts),
-            repair_enabled=not args.no_repair,
-        )
-        if not faithful:
-            F.log("init: FAITHFULNESS GATE DID NOT PASS. Do NOT run loop.py yet — "
-                  "review the latest REVIEW.md audit block and fix Defs/Theorems.")
-            return 1
-        F.log("init: faithfulness gate PASSED — Defs/Theorems faithfully match SKETCH.md.")
+    F.log("init: running the Defs/Theorems faithfulness gate "
+          "(the key anti-cheat checkpoint).")
+    faithful = run_faithfulness_gate(
+        target, args.model, log_dir,
+        max_attempts=MAX_FAITHFULNESS_ATTEMPTS,
+    )
+    if not faithful:
+        F.log("init: FAITHFULNESS GATE DID NOT PASS. Do NOT run loop.py yet — "
+              "review the latest REVIEW.md audit block and fix Defs/Theorems.")
+        return 1
+    F.log("init: faithfulness gate PASSED — Defs/Theorems faithfully match SKETCH.md.")
 
     F.log("init complete.")
     F.log("Next: python3 loop.py " + target)

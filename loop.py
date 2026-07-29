@@ -3,21 +3,18 @@
 loop.py — drive the autonomous formalization loop.
 
 Usage:
-    python3 loop.py [TARGET_DIR] [--max-iterations N] [--start K]
+    python3 loop.py [TARGET_DIR] [--max-iterations N]
 
 Preconditions:
     setup.py and init.py have been run (BLUEPRINT.md, frozen skeleton, TASKS.md,
     REVIEW.md, PROGRESS.md all present).
 
-Runs UNLIMITED iterations by default (until COMPLETE or paused/stopped) — set
+Runs UNLIMITED iterations by default (until COMPLETE or stopped) — set
 --max-iterations N for an explicit cap. Designed for long overnight sessions.
 
-Pausing / stopping between iterations (checked at each iteration boundary):
-    * create a file  <TARGET_DIR>/PAUSE  -> the loop waits (polling) until you
-      remove it, then continues in the same process.
-    * create a file  <TARGET_DIR>/STOP   -> the loop stops gracefully and exits;
-      the file is consumed. Re-run loop.py to resume from where it left off.
-    * Ctrl-C / SIGTERM once -> graceful stop at the next boundary; again -> quit.
+Stopping between iterations:
+    * Ctrl-C / SIGTERM once -> graceful stop at the next iteration boundary;
+      again -> force-quit immediately.
 Because the loop resumes from (highest iteration in TASKS.md) + 1, a graceful
 stop and a later re-run continue seamlessly.
 
@@ -65,17 +62,13 @@ from __future__ import annotations
 import argparse
 import os
 import signal
-import time
 
 import formlib as F
 
 
 # --------------------------------------------------------------------------- #
-# Pause / stop control (checked between iterations)
+# Stop control (checked between iterations)
 # --------------------------------------------------------------------------- #
-
-PAUSE_FILE = "PAUSE"
-STOP_FILE = "STOP"
 
 # Objective stall guards (repo-derived, independent of what the agents claim).
 # STALL_WINDOW: stop if the number of frozen theorems discharged in Solution.lean
@@ -115,38 +108,12 @@ def _install_signal_handlers():
             pass  # e.g. not in the main thread
 
 
-def _consume(path):
-    try:
-        os.remove(path)
-    except OSError:
-        pass
-
-
-def honor_pause_stop(target: str, poll_interval: int) -> str | None:
+def stop_requested() -> bool:
     """
-    Called at an iteration boundary. Returns 'stop' if a graceful stop was
-    requested (signal or STOP file), else None once any PAUSE has been lifted.
+    Called at an iteration boundary. True if a graceful stop was requested via
+    Ctrl-C / SIGTERM.
     """
-    stop_path = os.path.join(target, STOP_FILE)
-    pause_path = os.path.join(target, PAUSE_FILE)
-
-    def stop_now():
-        return _stop_requested["v"] or os.path.exists(stop_path)
-
-    if stop_now():
-        _consume(stop_path)
-        return "stop"
-
-    if os.path.exists(pause_path):
-        F.log(f"loop: PAUSE file present ({pause_path}) — paused between iterations. "
-              "Remove it to resume; create a STOP file or signal to stop.")
-        while os.path.exists(pause_path):
-            if stop_now():
-                _consume(stop_path)
-                return "stop"
-            time.sleep(poll_interval)
-        F.log("loop: PAUSE lifted — resuming.")
-    return None
+    return _stop_requested["v"]
 
 
 # --------------------------------------------------------------------------- #
@@ -424,10 +391,6 @@ def main() -> int:
     ap.add_argument("target", nargs="?", default=".", help="target directory (default: .)")
     ap.add_argument("--max-iterations", type=int, default=None,
                     help="optional safety cap on iterations (default: unlimited)")
-    ap.add_argument("--start", type=int, default=None,
-                    help="iteration number to start at (default: resume from TASKS.md)")
-    ap.add_argument("--poll-interval", type=int, default=20,
-                    help="seconds between PAUSE-file checks while paused (default 20)")
     ap.add_argument("--model", default=None, help="override the claude model")
     ap.add_argument("--dry-run", action="store_true", help="print prompts/commands, do not call claude")
     args = ap.parse_args()
@@ -446,7 +409,7 @@ def main() -> int:
 
     log_dir = os.path.join(target, "logs", "orchestration")
 
-    start = args.start if args.start is not None else F.highest_iteration(tasks_path) + 1
+    start = F.highest_iteration(tasks_path) + 1
     # Highest iteration that already existed when THIS run started. The recurrence
     # guard counts only cruxes circled AFTER this point, so a wall resolved (proved
     # or certificated) between runs does not re-fire the guard on iteration 1 from
@@ -455,16 +418,15 @@ def main() -> int:
     last = (start + args.max_iterations - 1) if args.max_iterations else None
     F.log(f"loop: target={target}")
     if last is None:
-        F.log(f"loop: starting at iteration {start}, unlimited (until COMPLETE or paused/stopped)")
+        F.log(f"loop: starting at iteration {start}, unlimited (until COMPLETE or stopped)")
     else:
         F.log(f"loop: starting at iteration {start}, cap {args.max_iterations} (through {last})")
-    F.log(f"loop: pause with `touch {os.path.join(target, PAUSE_FILE)}`, "
-          f"stop with `touch {os.path.join(target, STOP_FILE)}`")
+    F.log("loop: press Ctrl-C once to stop gracefully at the next iteration boundary.")
 
     n = start
     while last is None or n <= last:
-        # Iteration boundary: honor a pause/stop request before starting work.
-        if not args.dry_run and honor_pause_stop(target, args.poll_interval) == "stop":
+        # Iteration boundary: honor a graceful stop request before starting work.
+        if not args.dry_run and stop_requested():
             F.log(f"loop: graceful stop before iteration {n}. "
                   f"Re-run `python3 loop.py {target}` to resume from here.")
             return 0

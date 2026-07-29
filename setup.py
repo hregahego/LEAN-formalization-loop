@@ -38,8 +38,8 @@ import sys
 import formlib as F
 
 
-# Fallback USER_NOTES.md body, used only if the reference template is missing
-# (e.g. config.json reference_dir points at a project without one).
+# Fallback USER_NOTES.md body, used only if the bundled reference template is
+# missing its USER_NOTES.md.
 _DEFAULT_USER_NOTES = """\
 # USER_NOTES — special instructions for this formalization
 
@@ -198,8 +198,7 @@ def main() -> int:
     F.require_sketch(target)
 
     if not os.path.isdir(F.REFERENCE_DIR):
-        sys.exit(f"ERROR: reference dir not found: {F.REFERENCE_DIR}\n"
-                 f"Set config.json reference_dir to a project with the template format.")
+        sys.exit(f"ERROR: bundled reference dir not found: {F.REFERENCE_DIR}")
 
     F.log(f"setup: target={target}")
     F.log(f"setup: reference={F.REFERENCE_DIR}")

@@ -44,8 +44,6 @@ _DEFAULT_CONFIG = {
     "claude_bin": "claude",
     "codex_bin": "codex",
     "model": None,
-    "reference_dir": "reference",
-    "permission_mode": "skip",
     "stall_window": 16,
     "crux_recur_limit": 16,
     "timeouts": {
@@ -55,8 +53,6 @@ _DEFAULT_CONFIG = {
         "worker": 10800,
         "review": 10800,
     },
-    "codex_extra_args": [],
-    "claude_extra_args": [],
 }
 
 
@@ -93,11 +89,9 @@ CLAUDE_BIN = str(CONFIG.get("claude_bin") or "claude")
 CODEX_BIN = str(CONFIG.get("codex_bin") or "codex")
 DEFAULT_MODEL = CONFIG.get("model") or None
 
-# The format-template project. Relative paths are resolved next to these
-# scripts, so the repo is self-contained and portable.
-_ref = os.path.expanduser(str(CONFIG.get("reference_dir") or "reference"))
-REFERENCE_DIR = os.path.abspath(_ref if os.path.isabs(_ref) else os.path.join(_SCRIPT_DIR, _ref))
-PERMISSION_MODE = str(CONFIG.get("permission_mode") or "skip")
+# The format-template project, bundled next to these scripts so the repo is
+# self-contained and portable.
+REFERENCE_DIR = os.path.join(_SCRIPT_DIR, "reference")
 
 # Generous defaults: a Mathlib `lake exe cache get` + cold build (init) can take
 # well over an hour; a worker proving a hard lemma can run a long time too.
@@ -109,36 +103,10 @@ PLAN_TIMEOUT = int(_TIMEOUTS.get("plan", 1200))
 WORKER_TIMEOUT = int(_TIMEOUTS.get("worker", 3600))
 REVIEW_TIMEOUT = int(_TIMEOUTS.get("review", 2400))
 
-def _list_config(key: str) -> list[str]:
-    value = CONFIG.get(key, [])
-    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
-        sys.exit(f'ERROR: config.json "{key}" must be a list of strings.')
-    return list(value)
-
-
-def _claude_permission_args() -> list[str]:
-    if PERMISSION_MODE == "skip":
-        return ["--dangerously-skip-permissions"]
-    if PERMISSION_MODE in ("acceptEdits", "bypassPermissions", "plan", "default"):
-        return ["--permission-mode", PERMISSION_MODE]
-    # Unknown value: fall back to the most permissive headless mode.
-    return ["--dangerously-skip-permissions"]
-
-
-def _codex_permission_args() -> list[str]:
-    if PERMISSION_MODE in ("skip", "bypassPermissions"):
-        return ["--dangerously-bypass-approvals-and-sandbox"]
-    if PERMISSION_MODE == "default":
-        return []
-    if PERMISSION_MODE == "workspace-write":
-        return ["--sandbox", "workspace-write"]
-    if PERMISSION_MODE == "read-only":
-        return ["--sandbox", "read-only"]
-    if PERMISSION_MODE == "danger-full-access":
-        return ["--sandbox", "danger-full-access"]
-    # Claude-specific modes such as acceptEdits/plan do not have a direct Codex
-    # exec equivalent; use Codex's configured defaults.
-    return []
+# Headless, non-interactive: the loop runs unattended, so both CLIs use their
+# most permissive mode. Run the pipeline only in a directory you trust.
+_CLAUDE_PERMISSION_ARGS = ["--dangerously-skip-permissions"]
+_CODEX_PERMISSION_ARGS = ["--dangerously-bypass-approvals-and-sandbox"]
 
 
 # --------------------------------------------------------------------------- #
@@ -202,23 +170,21 @@ def build_cmd(prompt: str, add_dirs: list[str] | None = None,
     chosen = model or DEFAULT_MODEL
     if AGENT_CLI == "codex":
         cmd = [CODEX_BIN, "exec"]
-        cmd += _codex_permission_args()
+        cmd += _CODEX_PERMISSION_ARGS
         if chosen:
             cmd += ["--model", str(chosen)]
         for d in add_dirs or []:
             cmd += ["--add-dir", d]
-        cmd += _list_config("codex_extra_args")
         cmd += extra or []
         cmd += [prompt]
         return cmd
 
     cmd = [CLAUDE_BIN, "-p", prompt, "--output-format", output_format]
-    cmd += _claude_permission_args()
+    cmd += _CLAUDE_PERMISSION_ARGS
     if chosen:
         cmd += ["--model", str(chosen)]
     for d in add_dirs or []:
         cmd += ["--add-dir", d]
-    cmd += _list_config("claude_extra_args")
     cmd += extra or []
     return cmd
 
