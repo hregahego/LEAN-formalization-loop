@@ -17,10 +17,20 @@ What it does:
 
         BLUEPRINT.md          (Part -1 SETUP / file layout / frozen Defs &
                                Theorems / stages with cheat-watches / order)
-        PROGRESS.md           (append-only log header)
-        scripts/verify.sh     (the 5-check verification harness, this problem's
-                               theorem names)
+        scripts/harness.json  (project namespace, problem title, theorem names)
         scripts/frozen.sha256 (placeholder; init.py records the real pins)
+
+    setup.py itself then renders, from the reference:
+
+        scripts/verify.sh     (the 5-check verification harness)
+        PROGRESS.md           (append-only log header)
+        TASKS.md              (append-only header; 4-agent delegation)
+        REVIEW.md             (append-only header; audit log)
+
+    Only the values in harness.json vary between problems. The harness and the
+    append-only rules are deliberately NOT model-authored: the harness certifies
+    every result, and the log rules are pipeline policy, so both stay byte-identical
+    across runs. BLUEPRINT.md stays model-authored — it IS the problem-specific work.
         TASKS.md              (append-only header; 4-agent delegation)
         REVIEW.md             (append-only header; audit log)
 
@@ -32,7 +42,10 @@ Next step after this:  python3 init.py TARGET_DIR
 """
 
 import argparse
+import json
 import os
+import re
+import subprocess
 import sys
 
 import formlib as F
@@ -74,21 +87,23 @@ sketch in Lean 4. You do NOT write any Lean proofs now.
 A REFERENCE project that already scaffolded a DIFFERENT problem lives at:
     {ref}
 Read its files as strict FORMAT TEMPLATES. You must COPY THEIR STRUCTURE AND
-FORMAT EXACTLY (same sections, same headings, same PROGRESS entry format, the
-same five checks in verify.sh), but write CONTENT for the problem in THIS
-directory's SKETCH.md. Do NOT copy the prob4b mathematics — design the correct
-Lean decomposition for the CURRENT sketch.
+FORMAT EXACTLY (same sections, same headings), but write CONTENT for the problem
+in THIS directory's SKETCH.md. Do NOT copy the prob4b mathematics — design the
+correct Lean decomposition for the CURRENT sketch.
+
+BLUEPRINT.md is the one substantial file you author: it IS the problem-specific
+work. The verification harness and the append-only log headers are rendered by
+setup.py from the reference and are identical in every run.
 
 == Do this, in order ==
 
 1. Read ./SKETCH.md carefully. Understand the exact theorem and every step of
    the proof sketch. This is the mathematical source of truth.
 
-2. Read these reference files as FORMAT TEMPLATES:
+2. Read the reference BLUEPRINT as your FORMAT TEMPLATE:
      {ref}/BLUEPRINT.md
-     {ref}/PROGRESS.md
-     {ref}/scripts/verify.sh
-     {ref}/scripts/frozen.sha256
+   You do not need to read the reference verify.sh or log headers — you are not
+   writing those.
 
 3. Write ./BLUEPRINT.md with the SAME section structure as the reference:
    - Title + a "headline target" paragraph naming the frozen headline theorem.
@@ -127,41 +142,35 @@ Lean decomposition for the CURRENT sketch.
    - "## Suggested formalization order" (a dependency diagram).
    - "## Notes, risks, and cheats to watch out for".
 
-4. Write ./PROGRESS.md — ONLY the header (title + the append-only rules summary,
-   matching the reference header). NO log entries yet (init.py adds the first).
+4. Do NOT write ./PROGRESS.md, ./TASKS.md or ./REVIEW.md. setup.py copies those
+   three append-only log headers from the reference itself — their wording is
+   fixed pipeline policy, identical in every run, and not yours to restate.
 
-5. Write ./scripts/verify.sh — adapt the reference harness. Keep ALL FIVE checks
-   identical in spirit:
-     (1) Frozen SHA pins for Defs.lean + Theorems.lean match scripts/frozen.sha256;
-     (2) Banned keywords (sorry / sorryAx / native_decide / admit / unsafe /
-         implemented_by / ofReduceBool / `axiom` decl) in any first-party .lean,
-         comment-aware, with `sorry` allowed ONLY in Theorems.lean;
-     (3) clean `lake build` (only the expected Theorems.lean sorry warnings);
-     (4) `#print axioms` for each Solution.<name> ⊆ {propext, Classical.choice,
-         Quot.sound} (no sorryAx / native_decide / ofReduceBool);
-     (5) statement gates: Discharge.lean + Solution.lean compile.
-   Update REPO/SRC paths, the project source-dir name, and the ALL_THEOREMS
-   array to the theorem names you froze in step 3. Make it executable
-   (`chmod +x scripts/verify.sh`). KEEP the reference harness's allowed-axioms
-   logic intact: verify.sh reads scripts/ALLOWED_AXIOMS.txt (written later by
-   init.py from USER_NOTES.md) and permits exactly those axiom names in checks
-   (2) and (4), banning every other axiom. Do not remove or weaken that.
+5. Write ./scripts/harness.json — the ONLY harness artifact you produce. Exactly:
+     {"project": "<source-dir / root namespace name>",
+      "problem": "<short human-readable problem title, one line>",
+      "theorems": ["<frozen name 1>", "<frozen name 2>", ...]}
+   `problem` titles the generated logs (e.g. "Problem 20 (θ_n : Int(D)^⊗n →
+   Int(D^n))"); keep it to one line.
+   `theorems` must list EVERY frozen theorem name from step 3, in the order the
+   stages of BLUEPRINT.md prove them, and must match those names byte for byte.
+   Plain identifiers only — no namespace prefix, no `)` or `"` characters.
+
+   Do NOT write ./scripts/verify.sh. setup.py renders the verification harness
+   itself from the reference, substituting only the values above. Its five checks
+     (1) frozen SHA pins for Defs.lean + Theorems.lean;
+     (2) banned keywords (sorry / sorryAx / native_decide / admit / unsafe /
+         implemented_by / ofReduceBool / `axiom` decl), comment-aware, with
+         `sorry` allowed ONLY in Theorems.lean;
+     (3) clean `lake build`;
+     (4) `#print axioms` for each Solution.<name> within the allowlist;
+     (5) statement gates: Discharge.lean + Solution.lean compile
+   are FIXED LOGIC, identical across every problem. They are not yours to adapt,
+   weaken, re-derive, or reason about. The harness is what certifies the final
+   result, so it is never model-authored.
 
 6. Write ./scripts/frozen.sha256 — a single placeholder comment line, e.g.
    "# pins recorded by init.py after Defs.lean/Theorems.lean are frozen".
-
-7. Write ./TASKS.md — header ONLY:
-     # TASKS -- <problem> formalization
-     Append-only work-delegation log for 4 parallel worker agents. The Plan
-     agent appends one "## Iteration N" block per loop iteration. Each block has
-     a one-line goal then "Agent k: ..." lines (one per ACTIVE worker; inactive
-     agents are omitted). NEVER edit or delete an existing block.
-
-8. Write ./REVIEW.md — header ONLY:
-     # REVIEW -- <problem> formalization
-     Append-only audit log. The Review agent appends one "## Review -- Iteration
-     N" block per iteration with its findings and a "Verdict: COMPLETE |
-     INCOMPLETE" line. NEVER edit or delete an existing block.
 
 == Cheat-prevention you MUST bake into BLUEPRINT.md (adapt to the problem) ==
 - Defs.lean + Theorems.lean are FROZEN and byte-pinned by SHA; never edited
@@ -185,6 +194,173 @@ questions. Use your file tools to write all the files above. When finished,
 print a short summary listing (a) the project source-dir / namespace name and
 (b) the exact frozen theorem names you chose.
 """
+
+
+# A frozen theorem name as it may appear in the bash array and in formlib's
+# ALL_THEOREMS regex: no quotes, no `)`, no whitespace.
+_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.']*$")
+
+
+def _read_harness_params(target: str) -> tuple[str, str, list[str]]:
+    """The project namespace, problem title, and frozen theorem names.
+
+    Validated strictly: project/theorems are substituted into shell source, and
+    formlib re-parses them back out of verify.sh, so a stray quote or paren would
+    corrupt both the harness and the progress signal.
+    """
+    path = os.path.join(target, "scripts", "harness.json")
+    try:
+        data = json.loads(F.read_text(path))
+    except (OSError, ValueError) as exc:
+        raise RuntimeError(f"scripts/harness.json unreadable: {exc}") from exc
+
+    project = data.get("project")
+    if not isinstance(project, str) or not _NAME_RE.match(project):
+        raise RuntimeError(f"harness.json: bad 'project' name: {project!r}")
+
+    # Free-form prose (it names the problem for a human), so only sanity-checked:
+    # single line, non-empty. Falls back to the namespace if the agent omits it.
+    problem = data.get("problem") or project
+    if not isinstance(problem, str) or "\n" in problem or not problem.strip():
+        raise RuntimeError(f"harness.json: bad 'problem' title: {problem!r}")
+    problem = problem.strip()
+
+    theorems = data.get("theorems")
+    if not isinstance(theorems, list) or not theorems:
+        raise RuntimeError("harness.json: 'theorems' must be a non-empty list")
+    bad = [t for t in theorems if not isinstance(t, str) or not _NAME_RE.match(t)]
+    if bad:
+        raise RuntimeError(f"harness.json: bad theorem name(s): {bad!r}")
+    dupes = sorted({t for t in theorems if theorems.count(t) > 1})
+    if dupes:
+        raise RuntimeError(f"harness.json: duplicate theorem name(s): {dupes!r}")
+    return project, problem, theorems
+
+
+# Append-only scaffolding whose wording is fixed pipeline policy, not per-problem
+# content. Copied from the reference with only the problem title filled in, so the
+# rules every later agent reads are identical in every run.
+_BOILERPLATE = ("PROGRESS.md", "TASKS.md", "REVIEW.md")
+
+
+def _render_boilerplate(target: str, problem: str) -> list[str]:
+    """Write the append-only log headers verbatim from the reference."""
+    written = []
+    for name in _BOILERPLATE:
+        src = F.read_text(os.path.join(F.REFERENCE_DIR, name))
+        if not src:
+            raise RuntimeError(f"reference/{name} is missing or empty")
+        with open(os.path.join(target, name), "w", encoding="utf-8") as fh:
+            fh.write(src.replace("<problem>", problem))
+        written.append(name)
+    return written
+
+
+def _render_verify_sh(target: str, project: str, theorems: list[str]) -> str:
+    """Write scripts/verify.sh from the reference harness.
+
+    Only PROJECT and ALL_THEOREMS vary per problem; the five checks are fixed
+    logic and are never re-authored per run. Keeping both as plain literals is
+    also required by formlib._project_name / _solution_frozen_names, which read
+    them back out of the generated file.
+    """
+    src = F.read_text(os.path.join(F.REFERENCE_DIR, "scripts", "verify.sh"))
+    if not src:
+        raise RuntimeError("reference scripts/verify.sh is missing or empty")
+
+    names = " ".join('"%s"' % t for t in theorems)
+    src, n_proj = re.subn(r'(?m)^PROJECT=.*$', 'PROJECT="%s"' % project, src, count=1)
+    src, n_thms = re.subn(r'(?m)^ALL_THEOREMS=\(.*\)$', "ALL_THEOREMS=(%s)" % names,
+                          src, count=1)
+    if not n_proj or not n_thms:
+        raise RuntimeError("reference verify.sh lost its PROJECT / ALL_THEOREMS "
+                           "parameter block — cannot render the harness")
+
+    path = os.path.join(target, "scripts", "verify.sh")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(src)
+    os.chmod(path, 0o755)
+    return path
+
+
+def _lint_verify_sh(path: str) -> list[str]:
+    """Reject a harness that would silently skip checks instead of failing loudly.
+
+    Guards the two things that make a broken harness look like a passing one, plus
+    the literals formlib parses back out. Kept even though the file is now rendered
+    rather than model-authored: it also covers hand edits and future template work.
+    """
+    problems: list[str] = []
+    proc = subprocess.run(["bash", "-n", path], capture_output=True, text=True)
+    if proc.returncode != 0:
+        problems.append("verify.sh: bash syntax error: %s" % proc.stderr.strip())
+
+    text = F.read_text(path)
+    # Join backslash-continuations first, so a guard on the following physical
+    # line still counts as guarding the statement that opened it.
+    statements, buf, start = [], "", 1
+    for i, line in enumerate(text.splitlines(), 1):
+        if not buf:
+            start = i
+        buf += line.rstrip("\\") if line.rstrip().endswith("\\") else line
+        if not line.rstrip().endswith("\\"):
+            statements.append((start, buf))
+            buf = ""
+    if buf:
+        statements.append((start, buf))
+
+    # Track whether `set -e` is in force, so we can tell a deliberately unguarded
+    # substitution (wrapped in set +e, as checks 3-5 do) from an accidental one.
+    errexit = False
+    heredoc = None
+    for i, stmt in statements:
+        stripped = stmt.strip()
+
+        # Skip heredoc bodies — they are another language (the Check 2 scanner is
+        # Python) and must not be read as shell.
+        if heredoc is not None:
+            if stripped == heredoc:
+                heredoc = None
+            continue
+        hd = re.search(r"<<-?'?([A-Za-z_]\w*)'?", stripped)
+        if hd:
+            heredoc = hd.group(1)
+
+        if re.match(r"^set\s+-\w*e", stripped):
+            errexit = True
+        elif re.match(r"^set\s+\+\w*e", stripped):
+            errexit = False
+        if not errexit:
+            continue
+
+        guarded = "|| true" in stripped
+
+        # Under `set -e`, a no-match grep inside a command substitution aborts the
+        # whole run — silently skipping every check after it.
+        if re.match(r"^\w+=\$\(", stripped) and not guarded \
+                and re.search(r"\bgrep\b", stripped):
+            problems.append("verify.sh:%d: unguarded grep in command substitution "
+                            "(aborts under set -e when it matches nothing)" % i)
+
+        # Capturing `$?` only makes sense if the command was allowed to fail.
+        # Under `set -e` it never gets the chance — the harness dies first, so the
+        # check can only ever report success. This is how a check becomes pass-only.
+        if re.match(r"^\w+=\$\?", stripped):
+            problems.append("verify.sh:%d: captures $? while set -e is in force — "
+                            "the failure path can never report "
+                            "(wrap the command in set +e / set -e)" % i)
+
+    if not re.search(r'(?m)^\s*PROJECT\s*=\s*"', text):
+        problems.append("verify.sh: no PROJECT=\"...\" line "
+                        "(formlib._project_name parses it)")
+    if not re.search(r'ALL_THEOREMS=\([^)]*"', text):
+        problems.append("verify.sh: no ALL_THEOREMS=(\"...\") array "
+                        "(formlib._solution_frozen_names parses it)")
+    for check in ("Check 4", "Check 5"):
+        if check not in text:
+            problems.append("verify.sh: %s is missing" % check)
+    return problems
 
 
 def main() -> int:
@@ -228,22 +404,34 @@ def main() -> int:
     if args.dry_run:
         return 0
 
-    # Verify the expected artifacts landed.
-    expected = ["BLUEPRINT.md", "PROGRESS.md", "TASKS.md", "REVIEW.md",
-                "scripts/verify.sh", "scripts/frozen.sha256"]
+    # Verify the expected agent artifacts landed. The architect now writes only
+    # the problem-specific content; everything else is rendered below.
+    expected = ["BLUEPRINT.md", "scripts/harness.json", "scripts/frozen.sha256"]
     missing = [f for f in expected if not os.path.exists(os.path.join(target, f))]
     if missing:
         F.log(f"WARNING: setup agent did not create: {', '.join(missing)}")
         return 1 if not result.ok else 2
 
-    # Make verify.sh executable in case the agent forgot.
+    # Render the harness and the append-only headers ourselves — never the model.
     try:
-        os.chmod(os.path.join(target, "scripts", "verify.sh"), 0o755)
-    except OSError:
-        pass
+        project, problem, theorems = _read_harness_params(target)
+        verify_path = _render_verify_sh(target, project, theorems)
+        boilerplate = _render_boilerplate(target, problem)
+    except RuntimeError as exc:
+        F.log(f"ERROR: {exc}")
+        return 1
+    F.log(f"setup: rendered scripts/verify.sh (PROJECT={project}, "
+          f"{len(theorems)} frozen theorems)")
+    F.log(f"setup: rendered {', '.join(boilerplate)} from the reference")
+
+    problems = _lint_verify_sh(verify_path)
+    if problems:
+        for p in problems:
+            F.log(f"ERROR: {p}")
+        return 1
 
     F.log("setup complete. Scaffolding written:")
-    for f in expected:
+    for f in expected + ["scripts/verify.sh"] + list(_BOILERPLATE):
         F.log(f"  ✓ {f}")
     F.log("Next: python3 init.py " + target)
     return 0 if result.ok else 0  # files exist; surface agent exit only as info

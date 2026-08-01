@@ -106,10 +106,22 @@ run_lake() {
 # Standard axioms always permitted, plus any whitelisted via ALLOWED_AXIOMS.txt
 # (comments with `#` and blank lines ignored; comma- or newline-separated names).
 STD_AXIOMS=(propext Classical.choice Quot.sound)
+# Proof-hole axioms that can NEVER be whitelisted, whatever ALLOWED_AXIOMS.txt
+# says. That file is generated, so the allowlist must not be able to authorise the
+# very things the harness exists to detect: it is for assumed MATHEMATICAL
+# certificates only. Without this, one bad line makes Check 4 vacuous.
+DENIED_AXIOMS=" sorryAx ofReduceBool ofReduceNat Lean.ofReduceBool Lean.ofReduceNat "
 ALLOWED_AXIOMS=()
 if [ -f "$ALLOWED_AXIOMS_FILE" ]; then
     while IFS= read -r _ax; do
-        [ -n "$_ax" ] && ALLOWED_AXIOMS+=("$_ax")
+        [ -z "$_ax" ] && continue
+        case "$DENIED_AXIOMS" in
+            *" $_ax "*)
+                echo "ERROR: $ALLOWED_AXIOMS_FILE tries to whitelist \`$_ax\`, which"
+                echo "       is a proof hole, not an assumed certificate. Refusing to run."
+                exit 1 ;;
+        esac
+        ALLOWED_AXIOMS+=("$_ax")
     done < <(sed 's/#.*//' "$ALLOWED_AXIOMS_FILE" | tr ',' '\n' | tr -d ' \t\r' | grep -v '^$' || true)
 fi
 
@@ -126,10 +138,14 @@ START_TIME=$(date +%s)
 
 # --- Check 1: Frozen SHA pins ---
 echo "--- Check 1: Frozen SHA pins ---"
-while read -r pinned relpath; do
+# `|| [ -n "$pinned" ]` so a pins file with no trailing newline still checks its
+# LAST line — that line is conventionally Theorems.lean, the file most worth
+# pinning, and skipping it would leave Check 1 reporting PASS on an unverified pin.
+while read -r pinned relpath || [ -n "$pinned" ]; do
     [ -z "$pinned" ] && continue
     case "$pinned" in \#*) continue ;; esac    # skip comment lines
-    actual=$(sha256_of "$REPO_ROOT/$relpath")
+    # A missing/unreadable pinned file must FAIL the check, not abort the harness.
+    actual=$(sha256_of "$REPO_ROOT/$relpath" 2>/dev/null || true)
     if [ "$pinned" = "$actual" ]; then
         echo "PASS: $relpath pin matches"
     else
@@ -143,6 +159,10 @@ done < "$PINS_FILE"
 # --- Check 2: Banned keywords (comment-aware) ---
 echo ""
 echo "--- Check 2: Banned keywords ---"
+# The embedded script exits 1 when it FINDS violations, so the substitution must
+# run unguarded by `set -e` — otherwise a genuine cheat aborts the harness before
+# it can report, and the check becomes pass-only.
+set +e
 BANNED_OUT=$(SRC_DIR="$SRC_DIR" ROOT_LEAN="$REPO_ROOT/$PROJECT.lean" THEOREMS_FILE="$THEOREMS_FILE" \
     ALLOWED_AXIOMS="$(printf '%s\n' ${ALLOWED_AXIOMS[@]+"${ALLOWED_AXIOMS[@]}"})" python3 - <<'PY'
 import os, re, sys, glob
@@ -192,6 +212,7 @@ sys.exit(1 if bad else 0)
 PY
 )
 BANNED_EXIT=$?
+set -e
 if [ "$BANNED_EXIT" -eq 0 ]; then
     echo "PASS: no banned keywords (sorry allowed only in Theorems.lean)"
 else
@@ -222,8 +243,11 @@ fi
 # --- Check 4: #print axioms ---
 echo ""
 echo "--- Check 4: #print axioms ($PROJECT.Solution.*) ---"
-AX_FILE=$(mktemp /tmp/verify_ax_XXXX.lean)
-trap 'rm -f "$AX_FILE"' EXIT
+# mktemp only substitutes X's at the END of a template, so a "*_XXXX.lean" name
+# is taken literally on BSD/macOS. Use a temp dir to keep the .lean extension.
+AX_DIR=$(mktemp -d)
+AX_FILE="$AX_DIR/verify_ax.lean"
+trap 'rm -rf "$AX_DIR"' EXIT
 { echo "import $PROJECT"; for t in "${TARGETS[@]}"; do echo "#print axioms $PROJECT.Solution.$t"; done; } > "$AX_FILE"
 set +e
 AX_OUTPUT=$(run_lake env lean "$AX_FILE" 2>&1)
@@ -232,8 +256,10 @@ AX_FAIL=0
 # The full allowlist: the three standard axioms plus any whitelisted names.
 ALLOW_SET=" ${STD_AXIOMS[*]} ${ALLOWED_AXIOMS[*]+${ALLOWED_AXIOMS[*]}} "
 for t in "${TARGETS[@]}"; do
-    line=$(echo "$AX_OUTPUT" | grep "$PROJECT.Solution.$t' depends on axioms")
-    noax=$(echo "$AX_OUTPUT" | grep "$PROJECT.Solution.$t' does not depend on any axioms")
+    # No-match grep exits 1; under `set -e` that would abort the whole run, so
+    # both greps must tolerate the miss — a miss is a real, reportable state here.
+    line=$(echo "$AX_OUTPUT" | grep "$PROJECT.Solution.$t' depends on axioms" || true)
+    noax=$(echo "$AX_OUTPUT" | grep "$PROJECT.Solution.$t' does not depend on any axioms" || true)
     if [ -z "$line" ] && [ -z "$noax" ]; then
         echo "FAIL: $t — no axiom output (build/name error)"; AX_FAIL=$((AX_FAIL+1)); continue
     fi

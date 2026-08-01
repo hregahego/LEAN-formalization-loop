@@ -491,11 +491,18 @@ def _solution_frozen_names(target: str) -> list[str]:
     [] so the progress signal reads 0 and the stall guard surfaces the broken
     harness — rather than silently assuming another project's theorem names."""
     verify = read_text(os.path.join(target, "scripts", "verify.sh"))
-    m = re.search(r"ALL_THEOREMS=\(([^)]*)\)", verify)
+    m = re.search(r"ALL_THEOREMS=\(", verify)
     if m:
-        names = re.findall(r'"([^"]+)"', m.group(1))
-        if names:
-            return names
+        # Strip `#` comments BEFORE locating the closing paren: the stage comments
+        # inside the array routinely contain parens (e.g. "... lie in Int(D)"), and
+        # stopping at the first one silently truncates the list — a short list caps
+        # the progress signal and reads as a stall rather than as a broken parse.
+        rest = re.sub(r"#[^\n]*", "", verify[m.end():])
+        close = rest.find(")")
+        if close != -1:
+            names = re.findall(r'"([^"]+)"', rest[:close])
+            if names:
+                return names
     log("warning: could not parse ALL_THEOREMS from scripts/verify.sh — "
         "progress signal will read 0")
     return []
