@@ -121,6 +121,9 @@ def stop_requested() -> bool:
 # Phases
 # --------------------------------------------------------------------------- #
 
+_MAX_FAIL_LINES = 40  # failure lines quoted to the Review agent before truncating
+
+
 def run_verify(target: str, dry_run: bool = False) -> tuple[int, str]:
     """Run scripts/verify.sh and return (issues, combined output).
 
@@ -159,7 +162,7 @@ def run_verify(target: str, dry_run: bool = False) -> tuple[int, str]:
     return proc.returncode, out
 
 
-def verify_digest(issues: int, output: str, max_fail_lines: int = 40) -> str:
+def verify_digest(issues: int, output: str) -> str:
     """The harness output condensed for the Review prompt.
 
     Keeps every failure and the check headers, drops the PASS spam (which can run
@@ -178,9 +181,9 @@ def verify_digest(issues: int, output: str, max_fail_lines: int = 40) -> str:
     out = list(headers)
     if fails:
         out.append("")
-        out.extend(fails[:max_fail_lines])
-        if len(fails) > max_fail_lines:
-            out.append(f"... and {len(fails) - max_fail_lines} more FAIL line(s)")
+        out.extend(fails[:_MAX_FAIL_LINES])
+        if len(fails) > _MAX_FAIL_LINES:
+            out.append(f"... and {len(fails) - _MAX_FAIL_LINES} more FAIL line(s)")
     out.append("")
     out.append(f"({n_pass} PASS line(s) omitted)")
     out.extend(result or [f"=== exit code {issues} ==="])
@@ -270,7 +273,7 @@ def main() -> int:
     n = start
     while last is None or n <= last:
         # Iteration boundary: honor a graceful stop request before starting work.
-        if not args.dry_run and stop_requested():
+        if stop_requested():
             F.log(f"loop: graceful stop before iteration {n}. "
                   f"Re-run `python3 loop.py {target}` to resume from here.")
             return 0
@@ -293,9 +296,9 @@ def main() -> int:
                 # DONE), or the Plan agent hit a wall it cannot get past (STUCK).
                 # Distinguish them by the objective progress signal, so a finished
                 # run is reported COMPLETE instead of being mislabeled as stuck.
-                signal = F.progress_signal(target)
+                discharged = F.progress_signal(target)
                 n_frozen = len(F._solution_frozen_names(target))
-                if n_frozen > 0 and signal >= n_frozen:
+                if n_frozen > 0 and discharged >= n_frozen:
                     # DONE: all frozen theorems are discharged in Solution.lean.
                     # Confirm with a full-project audit, then report COMPLETE.
                     F.log(f"loop: Plan assigned no workers and all {n_frozen} frozen "
@@ -406,7 +409,7 @@ def main() -> int:
         # ONLY thing that matters — frozen theorems discharged in Solution.lean —
         # and stop if it has flat-lined, or if a single crux keeps being named as
         # the next step while nothing closes it.
-        signal = F.progress_signal(target)
+        discharged = F.progress_signal(target)
         ledger = F.record_progress(target, n, signal)
         n_frozen = len(F._solution_frozen_names(target))
         F.log(f"loop: progress signal after iteration {n}: "

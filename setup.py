@@ -58,39 +58,20 @@ import sys
 import formlib as F
 
 
-# Fallback USER_NOTES.md body, used only if the bundled reference template is
-# missing its USER_NOTES.md.
-_DEFAULT_USER_NOTES = """\
-# USER_NOTES — special instructions for this formalization
-
-Created by setup.py; read by init.py and loop.py. Put problem-specific guidance
-here BEFORE running init.py.
-
-By default the pipeline is maximally strict: solved theorems may depend only on
-{propext, Classical.choice, Quot.sound}; no custom `axiom`s; and no frozen
-theorem may carry an added hypothesis (this last rule is never relaxed).
-
-## Allowed axioms (assumed certificates)
-
-If a fact is mathematically routine but prohibitively expensive to PROVE in Lean
-(a large factorization, an explicit interpolant, a numeric certificate), you may
-assume it as a Lean `axiom` — never as a hypothesis on a frozen theorem. For each
-one, describe what it asserts, why it is assumed, and which theorem uses it.
-init.py declares the axiom(s) in Defs.lean and records their names in
-scripts/ALLOWED_AXIOMS.txt; verify.sh then permits exactly those and bans all
-other axioms.
-
-None — no assumed axioms.
-"""
-
-
 # A frozen theorem name as it may appear in the bash array and in formlib's
 # ALL_THEOREMS regex: no quotes, no `)`, no whitespace.
-_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.']*$")
+#
+# `\Z`, NOT `$`: in Python `$` also matches just before a trailing newline, so
+# `"name\n"` — which JSON can carry — would validate and then be written into the
+# bash array, breaking the harness the values are supposed to configure.
+_NAME_RE = re.compile(r"\A[A-Za-z_][A-Za-z0-9_.']*\Z")
 
 
-def _read_harness_params(target: str) -> tuple[str, str, list[str]]:
-    """The project namespace, problem title, and frozen theorem names.
+def _read_harness_params(
+    target: str,
+) -> tuple[str, str, list[str], str, list[str]]:
+    """(project, problem title, frozen theorem names, final theorem,
+    mandatory axioms) from scripts/harness.json.
 
     Validated strictly: project/theorems are substituted into shell source, and
     formlib re-parses them back out of verify.sh, so a stray quote or paren would
@@ -162,7 +143,7 @@ def _render_boilerplate(target: str, problem: str) -> list[str]:
 
 
 def _render_verify_sh(target: str, project: str, theorems: list[str],
-                      final_theorem: str = "", mandatory: list[str] | None = None) -> str:
+                      final_theorem: str, mandatory: list[str]) -> str:
     """Write scripts/verify.sh from the reference harness.
 
     Only the harness.json values vary per problem; the checks are fixed
@@ -182,7 +163,7 @@ def _render_verify_sh(target: str, project: str, theorems: list[str],
         raise RuntimeError("reference verify.sh lost its PROJECT / ALL_THEOREMS "
                            "parameter block — cannot render the harness")
 
-    axioms = " ".join('"%s"' % a for a in (mandatory or []))
+    axioms = " ".join('"%s"' % a for a in mandatory)
     src, n_fin = re.subn(r'(?m)^FINAL_THEOREM=.*$',
                          'FINAL_THEOREM="%s"' % final_theorem, src, count=1)
     src, n_max = re.subn(r'(?m)^MANDATORY_AXIOMS=\(.*\)$',
@@ -277,7 +258,10 @@ def _lint_verify_sh(path: str) -> list[str]:
     if not re.search(r'(?m)^\s*PROJECT\s*=\s*"', text):
         problems.append("verify.sh: no PROJECT=\"...\" line "
                         "(formlib._project_name parses it)")
-    if not re.search(r'ALL_THEOREMS=\([^)]*"', text):
+    # `[^)]*` would stop at the first `)` — the same shape that once truncated
+    # the theorem list when a stage comment contained one. Match the assignment
+    # and a quoted name without spanning parens.
+    if not re.search(r'(?m)^ALL_THEOREMS=\(\s*"', text):
         problems.append("verify.sh: no ALL_THEOREMS=(\"...\") array "
                         "(formlib._solution_frozen_names parses it)")
     for check in ("Check 4", "Check 5"):
@@ -310,7 +294,7 @@ def main() -> int:
         F.log("setup: USER_NOTES.md already present — leaving it untouched; the "
               "architect will read it.")
     else:
-        content = F.read_text(os.path.join(F.REFERENCE_DIR, "USER_NOTES.md")) or _DEFAULT_USER_NOTES
+        content = F.read_text(os.path.join(F.REFERENCE_DIR, "USER_NOTES.md"))
         with open(user_notes, "w", encoding="utf-8") as fh:
             fh.write(content)
         # The architect runs in a moment and reads this file, so a template
@@ -355,20 +339,24 @@ def main() -> int:
 
     # Pin the control files now. init.py re-pins once it has written
     # frozen.sha256 and ALLOWED_AXIOMS.txt; loop.py re-checks every iteration.
-    pinned = F.write_control_manifest(target)
-    F.log(f"setup: pinned control files ({', '.join(pinned)})")
-
     problems = _lint_verify_sh(verify_path)
     if problems:
         for p in problems:
             F.log(f"ERROR: {p}")
         return 1
 
+    # Pinned only after the harness passes its lint — a manifest vouching for a
+    # file we just rejected would be worse than no manifest.
+    pinned = F.write_control_manifest(target)
+    F.log(f"setup: pinned control files ({', '.join(pinned)})")
+
     F.log("setup complete. Scaffolding written:")
     for f in expected + ["scripts/verify.sh"] + list(_BOILERPLATE):
         F.log(f"  ✓ {f}")
     F.log("Next: python3 init.py " + target)
-    return 0 if result.ok else 0  # files exist; surface agent exit only as info
+    # The scaffold is complete even if the agent exited untidily; its status
+    # is information, not a failure of this step.
+    return 0
 
 
 if __name__ == "__main__":

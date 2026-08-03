@@ -204,3 +204,23 @@ class HarnessLint(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RegexAnchoring(unittest.TestCase):
+    """Python's `$` also matches before a trailing newline, so a whole-string
+    validator must use `\\Z`. A name carrying `\\n` would otherwise validate and
+    then be written into the harness's bash array."""
+
+    def test_name_validator_rejects_a_trailing_newline(self):
+        self.assertTrue(S._NAME_RE.match("good_name"))
+        self.assertIsNone(S._NAME_RE.match("bad\n"))
+        self.assertIsNone(S._NAME_RE.match("bad\nmore"))
+
+    def test_harness_params_reject_a_newline_bearing_theorem(self):
+        import json
+        d = tempfile.mkdtemp()
+        os.makedirs(os.path.join(d, "scripts"))
+        with open(os.path.join(d, "scripts", "harness.json"), "w") as fh:
+            json.dump({"project": "P", "problem": "x", "theorems": ["ok\n"]}, fh)
+        with self.assertRaises(RuntimeError):
+            S._read_harness_params(d)

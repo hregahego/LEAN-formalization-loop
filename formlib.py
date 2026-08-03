@@ -1,19 +1,24 @@
 """
 formlib — shared plumbing for the autonomous Lean 4 formalization pipeline.
 
-Every agent in this pipeline is a headless CLI subprocess. This module
-owns three concerns so that setup.py / init.py / loop.py stay thin:
+Every agent in this pipeline is a headless CLI subprocess. This module owns the
+shared plumbing so setup.py / init.py / loop.py stay thin. In file order:
 
-  1. Building and running an agent invocation (streaming + per-agent logs,
-     watchdog timeout, dry-run). With output_format="json" the agent's final
-     message is parsed out of the structured result.
-  2. Running several agents in parallel (the 4 workers of one iteration).
-  3. Reading the control signals: the PRIMARY signal is a machine-readable
+  * Configuration — config.json, merged over the defaults here.
+  * Prompt loading — prompts/*.md with @@MARKER@@ substitution.
+  * Control-file integrity — pinning and re-checking the four files that define
+    what "verified" means, since they live in the workspace the agents edit.
+  * Agent invocation — building and running one (streaming + per-agent logs,
+    watchdog timeout, dry-run), and running the 4 workers in parallel. With
+    output_format="json" the agent's final message is parsed out of the result.
+  * Control signals — the PRIMARY signal is a machine-readable
      `<<<ORCH {...} ORCH>>>` trailer the Plan/Review agent emits in its final
      message (carrying its own iteration number); the FALLBACK is an
-     iteration-scoped parse of the append-only TASKS.md / REVIEW.md. Because
-     those files are append-only, every file parse is scoped to ONE iteration's
-     block so stale entries from earlier iterations are never returned.
+    iteration-scoped parse of the append-only TASKS.md / REVIEW.md. Because
+    those files are append-only, every parse is scoped to ONE iteration's block,
+    so stale entries from earlier iterations are never returned.
+  * Progress and stall signals — how many frozen theorems are actually
+    discharged, and whether that number has stopped moving.
 
 Configuration is read from config.json next to these scripts. The default file
 uses Claude (`claude -p`); set `"agent_cli": "codex"` to use `codex exec`.
@@ -53,6 +58,7 @@ _DEFAULT_CONFIG = {
         "plan": 10800,
         "worker": 10800,
         "review": 10800,
+        "verify": 3600,
     },
 }
 
@@ -98,14 +104,14 @@ REFERENCE_DIR = os.path.join(_SCRIPT_DIR, "reference")
 # well over an hour; a worker proving a hard lemma can run a long time too.
 _timeouts_val = CONFIG.get("timeouts")
 _TIMEOUTS = _timeouts_val if isinstance(_timeouts_val, dict) else {}
-SETUP_TIMEOUT = int(_TIMEOUTS.get("setup", 1800))
-INIT_TIMEOUT = int(_TIMEOUTS.get("init", 7200))
-PLAN_TIMEOUT = int(_TIMEOUTS.get("plan", 1200))
-WORKER_TIMEOUT = int(_TIMEOUTS.get("worker", 3600))
-REVIEW_TIMEOUT = int(_TIMEOUTS.get("review", 2400))
+SETUP_TIMEOUT = int(_TIMEOUTS["setup"])
+INIT_TIMEOUT = int(_TIMEOUTS["init"])
+PLAN_TIMEOUT = int(_TIMEOUTS["plan"])
+WORKER_TIMEOUT = int(_TIMEOUTS["worker"])
+REVIEW_TIMEOUT = int(_TIMEOUTS["review"])
 # The harness is a plain build + a few greps; generous because a cold Mathlib
 # restore can precede it.
-VERIFY_TIMEOUT = int(_TIMEOUTS.get("verify", 3600))
+VERIFY_TIMEOUT = int(_TIMEOUTS["verify"])
 
 # Headless, non-interactive: the loop runs unattended, so both CLIs use their
 # most permissive mode. Run the pipeline only in a directory you trust.
@@ -304,7 +310,7 @@ class AgentResult:
 
 
 def build_cmd(prompt: str, add_dirs: list[str] | None = None,
-              model: str | None = None, extra: list[str] | None = None,
+              model: str | None = None,
               output_format: str = "text") -> list[str]:
     chosen = model or DEFAULT_MODEL
     if AGENT_CLI == "codex":
@@ -314,7 +320,6 @@ def build_cmd(prompt: str, add_dirs: list[str] | None = None,
             cmd += ["--model", str(chosen)]
         for d in add_dirs or []:
             cmd += ["--add-dir", d]
-        cmd += extra or []
         cmd += [prompt]
         return cmd
 
@@ -381,7 +386,6 @@ def run_agent(label: str, prompt: str, cwd: str, *,
               timeout: int | None = None,
               log_dir: str | None = None,
               dry_run: bool = False,
-              stream: bool = True,
               output_format: str = "text") -> AgentResult:
     """
     Launch one configured agent. A watchdog kills the process after `timeout`s.
@@ -409,12 +413,12 @@ def run_agent(label: str, prompt: str, cwd: str, *,
     if output_format == "json":
         raw, rc, timed_out = _exec_capture(cmd, cwd, timeout, log_fh)
         result_text = raw if AGENT_CLI == "codex" else parse_json_result(raw)
-        if stream and result_text:
+        if result_text:
             for line in result_text.splitlines():
                 sys.stdout.write(f"\033[2m[{label}]\033[0m {line}\n")
             sys.stdout.flush()
     else:
-        raw, rc, timed_out = _exec_stream(cmd, cwd, timeout, log_fh, label, stream)
+        raw, rc, timed_out = _exec_stream(cmd, cwd, timeout, log_fh, label)
         result_text = raw
 
     if log_fh:
@@ -427,7 +431,7 @@ def run_agent(label: str, prompt: str, cwd: str, *,
     return result
 
 
-def _exec_stream(cmd, cwd, timeout, log_fh, label, stream):
+def _exec_stream(cmd, cwd, timeout, log_fh, label):
     """Run streaming (stderr merged into stdout); echo lines live."""
     proc = subprocess.Popen(cmd, cwd=cwd, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, text=True, bufsize=1)
@@ -453,9 +457,8 @@ def _exec_stream(cmd, cwd, timeout, log_fh, label, stream):
             if log_fh:
                 log_fh.write(line)
                 log_fh.flush()
-            if stream:
-                sys.stdout.write(f"\033[2m[{label}]\033[0m {line}")
-                sys.stdout.flush()
+            sys.stdout.write(f"\033[2m[{label}]\033[0m {line}")
+            sys.stdout.flush()
         proc.wait()
     finally:
         if watchdog:
@@ -492,8 +495,6 @@ def run_agents_parallel(specs: list[dict], max_workers: int = 4) -> list[AgentRe
     results: list[AgentResult | None] = [None] * len(specs)
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = {pool.submit(run_agent, **spec): i for i, spec in enumerate(specs)}
-        for fut in futures:
-            pass
         for fut, i in futures.items():
             results[i] = fut.result()
     return results  # type: ignore[return-value]
@@ -549,7 +550,7 @@ def plan_active_agents(result: "AgentResult", tasks_path: str, n: int) -> list[i
     """
     tr = extract_trailer(result.result_text)
     if tr and tr.get("iteration") == n and isinstance(tr.get("active_agents"), list):
-        nums = {int(k) for k in tr["active_agents"] if str(k).isdigit() or isinstance(k, int)}
+        nums = {int(k) for k in tr["active_agents"] if str(k).isdigit()}
         scoped = sorted(k for k in nums if 1 <= k <= 4)
         if scoped:
             return scoped
@@ -580,7 +581,9 @@ def iteration_block(tasks_path: str, n: int) -> str:
     text = read_text(tasks_path)
     if not text:
         return ""
-    header = re.search(rf"(?m)^##\s*Iteration\s+{n}\b", text)
+    # Same tolerance as _ITER_HEADER, which finds this block's END: a strict
+    # start matcher would fail to find a block the end matcher can terminate.
+    header = re.search(rf"(?m)^\s*#{{1,6}}\s*Iteration\s+{n}\b", text)
     if not header:
         return ""
     rest = text[header.end():]

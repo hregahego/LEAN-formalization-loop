@@ -150,11 +150,10 @@ first thing you read and the last thing you write.
 - **Every entry is timestamped and stage-annotated.** Get the real UTC time with
   `date -u +"%Y-%m-%dT%H:%M:%SZ"` — do not invent or approximate timestamps.
 - **One entry per event, newest appended at the bottom**, in this exact format.
-  Write every line FLUSH LEFT — no leading spaces, no `-` bullet, no `**bold**`.
-  The orchestrator reads `Agent:` and `Next:` from column 0, and an indented or
-  decorated entry is silently unreadable, which disables the stall guards.
-  The `Agent:` label must contain `agent-iter<N>` so the entry can be attributed
-  to its iteration:
+  Write every line flush left, exactly as shown. The `Agent:` label must contain
+  `agent-iter<N>` so the entry can be attributed to its iteration, and lemma or
+  definition names on the `Next:` line must be wrapped in `backticks` — the
+  recurring-crux stall guard counts backticked identifiers:
 
 ```
 ## <UTC timestamp> — <stage/item, e.g. "Stage C · <lemma name>">

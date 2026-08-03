@@ -36,9 +36,9 @@ THEN DO THE WORK:
 WHEN FINISHED (success OR genuine blocker), APPEND to ./PROGRESS.md a timestamped
 entry in BLUEPRINT's mandated format:
 
-Write these lines FLUSH LEFT — no leading spaces, no `-` bullet, no `**bold**`.
-The orchestrator parses `Agent:` and `Next:` from column 0; an indented or
-decorated entry is silently unreadable and disables the stall guards.
+Write these lines flush left, exactly as shown. (The orchestrator's parsers do
+tolerate indentation and markdown decoration, but the plain form is what every
+other entry in the log uses.)
 
 ## <UTC timestamp> -- <stage/item you worked on>
 Agent: agent-iter@@N@@-@@K@@

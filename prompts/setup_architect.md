@@ -89,14 +89,19 @@ setup.py from the reference and are identical in every run.
    Plain identifiers only — no namespace prefix, no `)` or `"` characters.
 
    Do NOT write ./scripts/verify.sh. setup.py renders the verification harness
-   itself from the reference, substituting only the values above. Its checks
-     (1) frozen SHA pins for Defs.lean + Theorems.lean;
-     (2) banned keywords (sorry / sorryAx / native_decide / admit / unsafe /
-         implemented_by / ofReduceBool / `axiom` decl), comment-aware, with
-         `sorry` allowed ONLY in Theorems.lean;
-     (3) clean `lake build`;
-     (4) `#print axioms` for each Solution.<name> within the allowlist;
-     (5) statement gates: Discharge.lean + Solution.lean compile
+   itself from the reference, substituting only the values above. Its seven checks
+     (1)  frozen SHA pins for Defs.lean + Theorems.lean, and that both are pinned;
+     (2)  banned keywords (sorry / sorryAx / native_decide / admit / unsafe /
+          implemented_by / ofReduceBool / debug.skipKernelTC), comment- and
+          string-aware, with `sorry` allowed ONLY in Theorems.lean, and `axiom`
+          declarations allowed only when allowlisted;
+     (3)  clean `lake build`;
+     (4)  `#print axioms` for each Solution.<name> within the allowlist;
+     (4b) the headline theorem genuinely DEPENDS on every mandatory axiom
+          (skipped unless mandatory_axioms is set);
+     (5)  Discharge.lean and Solution.lean compile;
+     (5b) a generated `@P.<t> = @P.Solution.<t> := rfl` gate for EVERY frozen
+          theorem, so each audited declaration provably has the frozen type
    are FIXED LOGIC, identical across every problem. They are not yours to adapt,
    weaken, re-derive, or reason about. The harness is what certifies the final
    result, so it is never model-authored.
