@@ -255,26 +255,48 @@ set -e
 AX_FAIL=0
 # The full allowlist: the three standard axioms plus any whitelisted names.
 ALLOW_SET=" ${STD_AXIOMS[*]} ${ALLOWED_AXIOMS[*]+${ALLOWED_AXIOMS[*]}} "
+
+# `#print axioms` WRAPS its bracketed list across lines as soon as the list is
+# long — exactly what happens for declarations carrying a custom axiom. A
+# line-oriented grep + `sed 's/.*\[\(.*\)\].*/\1/'` then extracts NOTHING, the
+# loop below finds no bad names, and it reports PASS *vacuously* on precisely the
+# declarations this check exists to police. So flatten to one line FIRST and match
+# each declaration from its name to the first `]`.
+AX_FLAT=$(printf '%s' "$AX_OUTPUT" | tr '\n\t' '  ' | tr -s ' ')
+
+# axioms_of <fully.qualified.name> — that declaration's axioms, one per word.
+# Prints nothing when there is no `depends on axioms` record (missing name, build
+# error, or "does not depend on any axioms").
+axioms_of() {
+    # The colon is optional so the parse survives either Lean phrasing; the name
+    # is BRE-escaped so `.` cannot match a stray character.
+    _aq=$(printf '%s' "$1" | sed 's/[.[\]*^$\\]/\\&/g')
+    printf '%s\n' "$AX_FLAT" \
+        | grep -o "'$_aq' depends on axioms[:]* \[[^]]*\]" \
+        | sed -e 's/^.*\[//' -e 's/\]$//' | tr ',' ' '
+}
 for t in "${TARGETS[@]}"; do
-    # No-match grep exits 1; under `set -e` that would abort the whole run, so
-    # both greps must tolerate the miss — a miss is a real, reportable state here.
-    line=$(echo "$AX_OUTPUT" | grep "$PROJECT.Solution.$t' depends on axioms" || true)
-    noax=$(echo "$AX_OUTPUT" | grep "$PROJECT.Solution.$t' does not depend on any axioms" || true)
-    if [ -z "$line" ] && [ -z "$noax" ]; then
+    # Extraction must tolerate a miss — a miss is a real, reportable state here.
+    axlist=$(axioms_of "$PROJECT.Solution.$t" || true)
+    noax=$(printf '%s\n' "$AX_FLAT" \
+        | grep -o "'$PROJECT\.Solution\.$t' does not depend on any axioms" || true)
+    if [ -z "${axlist// /}" ] && [ -z "$noax" ]; then
         echo "FAIL: $t — no axiom output (build/name error)"; AX_FAIL=$((AX_FAIL+1)); continue
     fi
-    # Parse the bracketed axiom list; every name must be in the allowlist. Split
-    # on commas into whitespace and let the for-loop word-split (keeps dotted
-    # names like Classical.choice intact, drops surrounding spaces).
-    axlist=$(echo "$line" | sed -n 's/.*\[\(.*\)\].*/\1/p' | tr ',' ' ')
+    # Every name must be in the allowlist. The `for` loop word-splits `$axlist`
+    # (keeps dotted names like Classical.choice intact, drops surrounding spaces).
     bad=""
     for ax in $axlist; do
         case "$ALLOW_SET" in *" $ax "*) ;; *) bad="$bad $ax" ;; esac
     done
     if [ -n "$bad" ]; then
-        echo "FAIL: $t — non-whitelisted axiom(s):$bad"; echo "   $line"; AX_FAIL=$((AX_FAIL+1))
+        echo "FAIL: $t — non-whitelisted axiom(s):$bad"; echo "   axioms: $axlist"
+        AX_FAIL=$((AX_FAIL+1))
     else
-        echo "PASS: $t — axioms within allowlist {${STD_AXIOMS[*]}${ALLOWED_AXIOMS[*]+ + ${ALLOWED_AXIOMS[*]}}}"
+        # Print the PARSED list, not the allowlist template: an auditor must be
+        # able to see that the extraction really got the axioms rather than
+        # finding nothing — the exact failure mode this parse used to have.
+        echo "PASS: $t — axioms within allowlist: [$(echo $axlist | tr ' ' ',' | sed 's/,/, /g')]"
     fi
 done
 [ "$AX_FAIL" -ne 0 ] && ERRORS=$((ERRORS + 1))

@@ -102,6 +102,9 @@ INIT_TIMEOUT = int(_TIMEOUTS.get("init", 7200))
 PLAN_TIMEOUT = int(_TIMEOUTS.get("plan", 1200))
 WORKER_TIMEOUT = int(_TIMEOUTS.get("worker", 3600))
 REVIEW_TIMEOUT = int(_TIMEOUTS.get("review", 2400))
+# The harness is a plain build + a few greps; generous because a cold Mathlib
+# restore can precede it.
+VERIFY_TIMEOUT = int(_TIMEOUTS.get("verify", 3600))
 
 # Headless, non-interactive: the loop runs unattended, so both CLIs use their
 # most permissive mode. Run the pipeline only in a directory you trust.
