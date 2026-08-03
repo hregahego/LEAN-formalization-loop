@@ -149,17 +149,21 @@ first thing you read and the last thing you write.
   is itself treated as a cheating signal in the audit.
 - **Every entry is timestamped and stage-annotated.** Get the real UTC time with
   `date -u +"%Y-%m-%dT%H:%M:%SZ"` — do not invent or approximate timestamps.
-- **One entry per event, newest appended at the bottom**, in this exact format:
+- **One entry per event, newest appended at the bottom**, in this exact format.
+  Write every line FLUSH LEFT — no leading spaces, no `-` bullet, no `**bold**`.
+  The orchestrator reads `Agent:` and `Next:` from column 0, and an indented or
+  decorated entry is silently unreadable, which disables the stall guards.
+  The `Agent:` label must contain `agent-iter<N>` so the entry can be attributed
+  to its iteration:
 
-  ```
-  ## <UTC timestamp> — <stage/item, e.g. "Stage C · <lemma name>">
-  Agent: <your short label, e.g. "agent-stageC">
-  Status: ✅ proved | ⚠️ blocked | 🔧 in progress | 📝 decision
-  Check: <#print axioms result, lake build result, or n/a>
-  Note: <one or two lines — what you did, key lemma used, or exactly what blocks you>
-  Next: <for a ✅/⚠️ entry: what work this unblocks or what a follow-up agent should
-         do next, with exact lemma/file names to build on; "n/a" only if truly terminal>
-  ```
+```
+## <UTC timestamp> — <stage/item, e.g. "Stage C · <lemma name>">
+Agent: agent-iter<N>-<k>
+Status: ✅ proved | ⚠️ blocked | 🔧 in progress | 📝 decision
+Check: <#print axioms result, lake build result, or n/a>
+Note: <one or two lines — what you did, key lemma used, or exactly what blocks you>
+Next: <for a ✅/⚠️ entry: what work this unblocks or what a follow-up agent should do next, with exact lemma/file names to build on; "n/a" only if truly terminal>
+```
 
 - **The `Next:` line is mandatory on every `✅` and `⚠️` entry.** Point the next
   agent at the related work: which stage is now unblocked, the exact names of the

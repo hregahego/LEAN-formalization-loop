@@ -25,6 +25,7 @@ import os
 import re
 import sys
 import json
+import hashlib
 import threading
 import subprocess
 from dataclasses import dataclass
@@ -131,6 +132,102 @@ def read_text(path: str) -> str:
             return fh.read()
     except FileNotFoundError:
         return ""
+
+
+# --------------------------------------------------------------------------- #
+# Control-file integrity
+#
+# The harness and everything that configures it live INSIDE the workspace the
+# worker agents edit. Nothing else re-reads them, so a worker that whitelists its
+# own `axiom`, re-hashes a weakened Theorems.lean, or drops a name from
+# ALL_THEOREMS silently changes what "verified" means. These helpers pin the four
+# control files after each phase writes them and re-check them every iteration.
+#
+# This is tamper-EVIDENT, not tamper-proof: the manifest sits in the workspace
+# too, so an agent that edits a control file AND the manifest defeats it. What it
+# removes is the silent single-file edit, which is the realistic failure.
+# --------------------------------------------------------------------------- #
+
+CONTROL_FILES = ("scripts/verify.sh", "scripts/harness.json",
+                 "scripts/frozen.sha256", "scripts/ALLOWED_AXIOMS.txt")
+CONTROL_MANIFEST = "scripts/control_manifest.sha256"
+# Stands where a hash would go, recording that a control file did NOT exist when
+# the manifest was written — so creating one later is detected rather than free.
+_ABSENT = "ABSENT" + "-" * 58   # same width as a sha256 hex digest
+
+
+def sha256_file(path: str) -> str | None:
+    """Hex SHA-256 of a file, or None if it cannot be read."""
+    try:
+        with open(path, "rb") as fh:
+            return hashlib.sha256(fh.read()).hexdigest()
+    except OSError:
+        return None
+
+
+def write_control_manifest(target: str) -> list[str]:
+    """Pin every control file that currently exists. Returns the pinned paths.
+
+    Called after setup (verify.sh + harness.json) and again after init has
+    written frozen.sha256 and ALLOWED_AXIOMS.txt, so the manifest always
+    describes the phase that just completed.
+    """
+    lines, pinned = [], []
+    for rel in CONTROL_FILES:
+        digest = sha256_file(os.path.join(target, rel))
+        if digest is None:
+            # Pin the ABSENCE too. verify.sh honours ALLOWED_AXIOMS.txt whenever
+            # it exists, so a file left uncreated is an open door: a worker could
+            # add one later and, if absence went unrecorded, nothing would notice.
+            lines.append(f"{_ABSENT}  {rel}")
+        else:
+            lines.append(f"{digest}  {rel}")
+            pinned.append(rel)
+    path = os.path.join(target, CONTROL_MANIFEST)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write("# SHA-256 of the files that define what verification MEANS.\n"
+                 "# Written by setup.py/init.py, re-checked by loop.py each iteration.\n"
+                 "# A mismatch means the harness or its config changed mid-run.\n")
+        fh.write("\n".join(lines) + "\n")
+    return pinned
+
+
+def check_control_manifest(target: str) -> list[str]:
+    """Problems with the control files, newest state vs the manifest.
+
+    Empty list == everything matches. A MISSING manifest is itself a problem:
+    absence must not read as success.
+    """
+    manifest = read_text(os.path.join(target, CONTROL_MANIFEST))
+    if not manifest.strip():
+        return [f"{CONTROL_MANIFEST} is missing or empty — control files "
+                "were never pinned, so tampering cannot be detected"]
+    problems = []
+    seen = []
+    for line in manifest.splitlines():
+        line = line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        parts = line.split(None, 1)
+        if len(parts) != 2:
+            problems.append(f"{CONTROL_MANIFEST}: unparseable line: {line!r}")
+            continue
+        pinned_hash, rel = parts[0], parts[1].strip()
+        seen.append(rel)
+        actual = sha256_file(os.path.join(target, rel))
+        if pinned_hash == _ABSENT:
+            if actual is not None:
+                problems.append(f"{rel}: CREATED since pinning (it did not exist "
+                                "when the control files were pinned)")
+        elif actual is None:
+            problems.append(f"{rel}: pinned but now MISSING")
+        elif actual != pinned_hash:
+            problems.append(f"{rel}: MODIFIED since it was pinned "
+                            f"(expected {pinned_hash[:12]}, found {actual[:12]})")
+    if not seen:
+        problems.append(f"{CONTROL_MANIFEST}: contains no pins")
+    return problems
 
 
 def resolve_target(arg: str | None) -> str:
@@ -379,10 +476,16 @@ def run_agents_parallel(specs: list[dict], max_workers: int = 4) -> list[AgentRe
 # are append-only, so each parser slices out exactly the requested iteration's
 # block(s) and ignores everything from earlier iterations.
 
-_ITER_HEADER = re.compile(r"(?m)^##\s*Iteration\s+(\d+)\b")
-_AGENT_LINE = re.compile(r"(?m)^\s*Agent\s+(\d+)\s*:")
-_VERDICT = re.compile(r"(?mi)^\s*Verdict:\s*(COMPLETE|INCOMPLETE)\b")
-_REVIEW_HEADER = re.compile(r"(?m)^##\s*Review\b[^\n]*?Iteration\s+(\d+)\b")
+# These files are written by LLM agents, so the format is a request, not a
+# guarantee. Accept the ordinary drift a model introduces when reproducing a
+# schema — leading indentation, a list bullet, `**bold**` — because a matcher
+# that only accepts the pristine form turns a cosmetic slip into a SILENTLY
+# disabled guard rather than a visible error. `_LEAD` is that tolerance.
+_LEAD = r"[ \t>]*(?:[-*+]\s+)?\*{0,2}\s*"
+_ITER_HEADER = re.compile(r"(?m)^\s*#{1,6}\s*Iteration\s+(\d+)\b")
+_AGENT_LINE = re.compile(r"(?m)^" + _LEAD + r"Agent\s*(\d+)\s*\*{0,2}\s*:")
+_VERDICT = re.compile(r"(?mi)^" + _LEAD + r"Verdict\*{0,2}\s*:\s*\*{0,2}\s*(COMPLETE|INCOMPLETE)\b")
+_REVIEW_HEADER = re.compile(r"(?m)^\s*#{1,6}\s*Review\b[^\n]*?Iteration\s+(\d+)\b")
 _TRAILER = re.compile(r"<<<ORCH\s*(\{.*?\})\s*ORCH>>>", re.S)
 
 
@@ -602,7 +705,7 @@ def stalled_for(ledger: list[dict], k: int) -> bool:
 # Backticked identifier on a PROGRESS.md "Next:" line — the crux a worker says a
 # follow-up must attack. A crux name that recurs across many iterations' Next:
 # lines is a hard wall the loop is circling rather than closing.
-_NEXT_LINE = re.compile(r"(?mi)^Next:\s*(.*)$")
+_NEXT_LINE = re.compile(r"(?mi)^" + _LEAD + r"Next\*{0,2}\s*:\s*\*{0,2}\s*(.*)$")
 _IDENT = re.compile(r"`([A-Za-z_][A-Za-z0-9_']*)`")
 # The iteration an entry belongs to, from its "Agent: agent-iterNNN-k" line.
 _ENTRY_ITER = re.compile(r"agent-iter0*(\d+)")
@@ -630,7 +733,8 @@ def recurring_crux(progress_path: str, threshold: int,
     counts: dict[str, int] = {}
     # Split into per-agent entries (each begins with a '## ' header) so each
     # 'Next:' line can be attributed to its entry's iteration.
-    for entry in re.split(r"(?m)^(?=##\s)", text):
+    total_next = len(_NEXT_LINE.findall(text))
+    for entry in re.split(r"(?m)^(?=\s*#{2,6}\s)", text):
         if since_iteration is not None:
             m = _ENTRY_ITER.search(entry)
             if m is None or int(m.group(1)) <= since_iteration:
@@ -639,6 +743,13 @@ def recurring_crux(progress_path: str, threshold: int,
             for name in set(_IDENT.findall(line)):
                 counts[name] = counts.get(name, 0) + 1
     if not counts:
+        # Distinguish "nothing recurs" from "this guard is blind". A PROGRESS.md
+        # with entries but no parseable `Next:` line means the format drifted and
+        # the crux guard is silently inert — say so rather than returning a
+        # confident None.
+        if total_next == 0 and text.strip():
+            log("warning: no parseable 'Next:' line in PROGRESS.md — the "
+                "recurring-crux guard cannot see anything")
         return None
     name, count = max(counts.items(), key=lambda kv: kv[1])
     return (name, count) if count >= threshold else None

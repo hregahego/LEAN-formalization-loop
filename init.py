@@ -343,6 +343,13 @@ def main() -> int:
         return 1
     F.log("init: faithfulness gate PASSED — Defs/Theorems faithfully match SKETCH.md.")
 
+    # Re-pin the control files: the SHA pins and the axiom allowlist exist only
+    # now, and the gate may have re-frozen Defs/Theorems (which rewrites
+    # frozen.sha256). From here on any change to these is tampering, and loop.py
+    # re-checks them every iteration.
+    pinned = F.write_control_manifest(target)
+    F.log(f"init: pinned control files ({', '.join(pinned)})")
+
     F.log("init complete.")
     F.log("Next: python3 loop.py " + target)
     return 0

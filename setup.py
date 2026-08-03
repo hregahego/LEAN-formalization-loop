@@ -22,7 +22,7 @@ What it does:
 
     setup.py itself then renders, from the reference:
 
-        scripts/verify.sh     (the 5-check verification harness)
+        scripts/verify.sh     (the 7-check verification harness)
         PROGRESS.md           (append-only log header)
         TASKS.md              (append-only header; 4-agent delegation)
         REVIEW.md             (append-only header; audit log)
@@ -31,15 +31,22 @@ What it does:
     append-only rules are deliberately NOT model-authored: the harness certifies
     every result, and the log rules are pipeline policy, so both stay byte-identical
     across runs. BLUEPRINT.md stays model-authored — it IS the problem-specific work.
-        TASKS.md              (append-only header; 4-agent delegation)
-        REVIEW.md             (append-only header; audit log)
 
     It also writes USER_NOTES.md directly (from the reference template) — the
     user-editable file for special instructions, in particular any
-    assumed-certificate axioms to permit. Fill it in BEFORE running init.py.
+    assumed-certificate axioms to permit. An existing USER_NOTES.md is never
+    overwritten.
+
+    Fill it in BEFORE running setup.py if the problem needs assumed axioms or a
+    mandated proof route: the architect reads it, and only it can record the
+    Check 4b parameters (final_theorem / mandatory_axioms) into harness.json.
+    Seeding it later — before init.py — still permits the axioms, but Check 4b
+    (which enforces that a permitted certificate is actually USED) stays off.
 
 Next step after this:  python3 init.py TARGET_DIR
 """
+
+from __future__ import annotations
 
 import argparse
 import json
@@ -98,7 +105,12 @@ setup.py from the reference and are identical in every run.
 == Do this, in order ==
 
 1. Read ./SKETCH.md carefully. Understand the exact theorem and every step of
-   the proof sketch. This is the mathematical source of truth.
+   the proof sketch. This is the mathematical source of truth. Then read
+   ./USER_NOTES.md — the user's standing instructions for THIS problem. If it
+   permits assumed-certificate axioms, or requires a particular proof route, that
+   constrains the decomposition you design in step 3 and the harness parameters
+   you record in step 5. If it still reads "None — no assumed axioms", the
+   default strict policy applies and there is nothing extra to honour.
 
 2. Read the reference BLUEPRINT as your FORMAT TEMPLATE:
      {ref}/BLUEPRINT.md
@@ -149,7 +161,14 @@ setup.py from the reference and are identical in every run.
 5. Write ./scripts/harness.json — the ONLY harness artifact you produce. Exactly:
      {"project": "<source-dir / root namespace name>",
       "problem": "<short human-readable problem title, one line>",
-      "theorems": ["<frozen name 1>", "<frozen name 2>", ...]}
+      "theorems": ["<frozen name 1>", "<frozen name 2>", ...],
+      "final_theorem": "<headline theorem name, or omit>",
+      "mandatory_axioms": ["<Project>.<axiom>", ...]}
+   Include `final_theorem` + `mandatory_axioms` ONLY when USER_NOTES.md requires
+   an assumed certificate to actually be USED (e.g. it forbids an alternative
+   route that would not need it). Check 4 alone rejects only EXTRA axioms, so a
+   proof that quietly took the cheaper route would otherwise pass. Omit both
+   (the normal case) and the check is skipped.
    `problem` titles the generated logs (e.g. "Problem 20 (θ_n : Int(D)^⊗n →
    Int(D^n))"); keep it to one line.
    `theorems` must list EVERY frozen theorem name from step 3, in the order the
@@ -157,7 +176,7 @@ setup.py from the reference and are identical in every run.
    Plain identifiers only — no namespace prefix, no `)` or `"` characters.
 
    Do NOT write ./scripts/verify.sh. setup.py renders the verification harness
-   itself from the reference, substituting only the values above. Its five checks
+   itself from the reference, substituting only the values above. Its checks
      (1) frozen SHA pins for Defs.lean + Theorems.lean;
      (2) banned keywords (sorry / sorryAx / native_decide / admit / unsafe /
          implemented_by / ofReduceBool / `axiom` decl), comment-aware, with
@@ -234,7 +253,24 @@ def _read_harness_params(target: str) -> tuple[str, str, list[str]]:
     dupes = sorted({t for t in theorems if theorems.count(t) > 1})
     if dupes:
         raise RuntimeError(f"harness.json: duplicate theorem name(s): {dupes!r}")
-    return project, problem, theorems
+
+    # Optional Check 4b: which axioms the headline theorem MUST depend on.
+    final_theorem = data.get("final_theorem") or ""
+    mandatory = data.get("mandatory_axioms") or []
+    if final_theorem and not _NAME_RE.match(final_theorem):
+        raise RuntimeError(f"harness.json: bad 'final_theorem': {final_theorem!r}")
+    if not isinstance(mandatory, list):
+        raise RuntimeError("harness.json: 'mandatory_axioms' must be a list")
+    bad_ax = [a for a in mandatory if not isinstance(a, str) or not _NAME_RE.match(a)]
+    if bad_ax:
+        raise RuntimeError(f"harness.json: bad mandatory axiom name(s): {bad_ax!r}")
+    if mandatory and not final_theorem:
+        raise RuntimeError("harness.json: 'mandatory_axioms' needs 'final_theorem' "
+                           "(the check inspects that theorem's dependencies)")
+    if final_theorem and final_theorem not in theorems:
+        raise RuntimeError(f"harness.json: 'final_theorem' {final_theorem!r} is not "
+                           "one of 'theorems'")
+    return project, problem, theorems, final_theorem, mandatory
 
 
 # Append-only scaffolding whose wording is fixed pipeline policy, not per-problem
@@ -256,10 +292,11 @@ def _render_boilerplate(target: str, problem: str) -> list[str]:
     return written
 
 
-def _render_verify_sh(target: str, project: str, theorems: list[str]) -> str:
+def _render_verify_sh(target: str, project: str, theorems: list[str],
+                      final_theorem: str = "", mandatory: list[str] | None = None) -> str:
     """Write scripts/verify.sh from the reference harness.
 
-    Only PROJECT and ALL_THEOREMS vary per problem; the five checks are fixed
+    Only the harness.json values vary per problem; the checks are fixed
     logic and are never re-authored per run. Keeping both as plain literals is
     also required by formlib._project_name / _solution_frozen_names, which read
     them back out of the generated file.
@@ -275,6 +312,15 @@ def _render_verify_sh(target: str, project: str, theorems: list[str]) -> str:
     if not n_proj or not n_thms:
         raise RuntimeError("reference verify.sh lost its PROJECT / ALL_THEOREMS "
                            "parameter block — cannot render the harness")
+
+    axioms = " ".join('"%s"' % a for a in (mandatory or []))
+    src, n_fin = re.subn(r'(?m)^FINAL_THEOREM=.*$',
+                         'FINAL_THEOREM="%s"' % final_theorem, src, count=1)
+    src, n_max = re.subn(r'(?m)^MANDATORY_AXIOMS=\(.*\)$',
+                         "MANDATORY_AXIOMS=(%s)" % axioms, src, count=1)
+    if not n_fin or not n_max:
+        raise RuntimeError("reference verify.sh lost its FINAL_THEOREM / "
+                           "MANDATORY_AXIOMS parameter block")
 
     path = os.path.join(target, "scripts", "verify.sh")
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -336,12 +382,20 @@ def _lint_verify_sh(path: str) -> list[str]:
 
         guarded = "|| true" in stripped
 
-        # Under `set -e`, a no-match grep inside a command substitution aborts the
-        # whole run — silently skipping every check after it.
-        if re.match(r"^\w+=\$\(", stripped) and not guarded \
-                and re.search(r"\bgrep\b", stripped):
-            problems.append("verify.sh:%d: unguarded grep in command substitution "
-                            "(aborts under set -e when it matches nothing)" % i)
+        # Under `set -e` + `pipefail`, a no-match grep aborts the whole run. This
+        # bites in TWO shapes, and checking only the first missed three live cases:
+        #   VAR=$(... grep ...)          — command substitution
+        #   echo "$x" | grep ... | head  — a bare pipeline, typically on a FAILURE
+        #                                  path printing diagnostics, so the harness
+        #                                  dies exactly when it has something to say.
+        if not guarded and re.search(r"\bgrep\b", stripped) \
+                and not stripped.startswith("#"):
+            if re.match(r"^\w+=\$\(", stripped):
+                problems.append("verify.sh:%d: unguarded grep in command "
+                                "substitution (aborts under set -e on no match)" % i)
+            elif "|" in stripped and not re.match(r"^(if|while|until|case)\b", stripped):
+                problems.append("verify.sh:%d: unguarded grep pipeline (aborts "
+                                "under set -e + pipefail on no match)" % i)
 
         # Capturing `$?` only makes sense if the command was allowed to fail.
         # Under `set -e` it never gets the chance — the harness dies first, so the
@@ -384,13 +438,19 @@ def main() -> int:
     # where assumed-certificate axioms are permitted. Never clobber an existing one.
     user_notes = os.path.join(target, "USER_NOTES.md")
     if os.path.exists(user_notes):
-        F.log("setup: USER_NOTES.md already present — leaving it untouched.")
+        F.log("setup: USER_NOTES.md already present — leaving it untouched; the "
+              "architect will read it.")
     else:
         content = F.read_text(os.path.join(F.REFERENCE_DIR, "USER_NOTES.md")) or _DEFAULT_USER_NOTES
         with open(user_notes, "w", encoding="utf-8") as fh:
             fh.write(content)
-        F.log("setup: created USER_NOTES.md — edit it before init.py to permit any "
-              "assumed-certificate axioms (default: none).")
+        # The architect runs in a moment and reads this file, so a template
+        # created now means it sees the strict default. Editing it later still
+        # permits axioms (init.py reads it) but cannot switch Check 4b on.
+        F.log("setup: created USER_NOTES.md from the template (strict default: no "
+              "assumed axioms). If this problem needs assumed axioms or a mandated "
+              "proof route, stop, fill it in, and re-run setup.py — the architect "
+              "reads it NOW, and Check 4b can only be configured here.")
 
     prompt = PROMPT.replace("{ref}", F.REFERENCE_DIR)
     result = F.run_agent(
@@ -414,8 +474,8 @@ def main() -> int:
 
     # Render the harness and the append-only headers ourselves — never the model.
     try:
-        project, problem, theorems = _read_harness_params(target)
-        verify_path = _render_verify_sh(target, project, theorems)
+        project, problem, theorems, final_thm, mandatory = _read_harness_params(target)
+        verify_path = _render_verify_sh(target, project, theorems, final_thm, mandatory)
         boilerplate = _render_boilerplate(target, problem)
     except RuntimeError as exc:
         F.log(f"ERROR: {exc}")
@@ -423,6 +483,11 @@ def main() -> int:
     F.log(f"setup: rendered scripts/verify.sh (PROJECT={project}, "
           f"{len(theorems)} frozen theorems)")
     F.log(f"setup: rendered {', '.join(boilerplate)} from the reference")
+
+    # Pin the control files now. init.py re-pins once it has written
+    # frozen.sha256 and ALLOWED_AXIOMS.txt; loop.py re-checks every iteration.
+    pinned = F.write_control_manifest(target)
+    F.log(f"setup: pinned control files ({', '.join(pinned)})")
 
     problems = _lint_verify_sh(verify_path)
     if problems:

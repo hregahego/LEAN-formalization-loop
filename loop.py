@@ -255,12 +255,16 @@ THEN DO THE WORK:
 WHEN FINISHED (success OR genuine blocker), APPEND to ./PROGRESS.md a timestamped
 entry in BLUEPRINT's mandated format:
 
-  ## <UTC timestamp> -- <stage/item you worked on>
-  Agent: agent-iter{n}-{k}
-  Status: ✅ proved | ⚠️ blocked | 🔧 in progress | 📝 decision
-  Check: <#print axioms result, or lake build result, or n/a>
-  Note: <what you did, key lemma used, or the EXACT failing goal/error that blocks you>
-  Next: <what this unblocks / what a follow-up agent should do, with exact lemma & file names>
+Write these lines FLUSH LEFT — no leading spaces, no `-` bullet, no `**bold**`.
+The orchestrator parses `Agent:` and `Next:` from column 0; an indented or
+decorated entry is silently unreadable and disables the stall guards.
+
+## <UTC timestamp> -- <stage/item you worked on>
+Agent: agent-iter{n}-{k}
+Status: ✅ proved | ⚠️ blocked | 🔧 in progress | 📝 decision
+Check: <#print axioms result, or lake build result, or n/a>
+Note: <what you did, key lemma used, or the EXACT failing goal/error that blocks you>
+Next: <what this unblocks / what a follow-up agent should do, with exact lemma & file names>
 
 Only mark `✅` what ACTUALLY compiles with a clean `#print axioms` -- never fake a
 ✅. Finally, print a one-paragraph report of what you accomplished or what blocked
@@ -353,8 +357,9 @@ SKETCH.md, weakened or trivialized statements, faked ✅, and net progress.
 
 FULL_AUDIT_BLOCK = """\
 FULL-PROJECT AUDIT (this is a checkpoint/final audit): review the ENTIRE
-formalization end-to-end, not just this iteration. Re-run `scripts/verify.sh` over
-ALL theorems, re-read every frozen statement in Theorems.lean against SKETCH.md
+formalization end-to-end, not just this iteration. The harness result quoted above
+already covers ALL theorems, so do not re-run it. Instead re-read every frozen
+statement in Theorems.lean against SKETCH.md
 for faithfulness, and hunt for any LARGE-SCALE trivialization, cheat, or
 weakening that may have accumulated across iterations (a definition quietly
 softened, a `∀` that became a special case, an axiom-dirty proof, a one-sided
@@ -375,11 +380,20 @@ def run_verify(target: str, dry_run: bool = False) -> tuple[int, str]:
     number of failing checks, so the exit code IS the issue count; -1 means the
     harness itself could not be run, which is a failure, not a pass.
     """
+    # --dry-run inspects prompts; it does not inspect the target.
+    if dry_run:
+        return 0, "[dry-run] verify.sh not executed"
     path = os.path.join(target, "scripts", "verify.sh")
     if not os.path.isfile(path):
         return -1, "scripts/verify.sh not found"
-    if dry_run:
-        return 0, "[dry-run] verify.sh not executed"
+
+    # The harness and its config live in the workspace the workers edit, so a
+    # result is only meaningful if they are still the files that were pinned.
+    # Checked BEFORE running: a tampered harness must not get to report a pass.
+    tampered = F.check_control_manifest(target)
+    if tampered:
+        return -1, "CONTROL FILES CHANGED SINCE THEY WERE PINNED:\n  " + \
+                   "\n  ".join(tampered)
     try:
         proc = subprocess.run([path], cwd=target, capture_output=True, text=True,
                               timeout=F.VERIFY_TIMEOUT)
@@ -387,7 +401,12 @@ def run_verify(target: str, dry_run: bool = False) -> tuple[int, str]:
         return -1, f"verify.sh timed out after {F.VERIFY_TIMEOUT}s"
     except OSError as exc:
         return -1, f"verify.sh could not be run: {exc}"
-    return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
+    out = (proc.stdout or "") + (proc.stderr or "")
+    # 64 = pre-flight failure: the harness verified NOTHING. Reporting that as
+    # "1 issue" would make it indistinguishable from one ordinary failing check.
+    if proc.returncode >= 64:
+        return -1, f"verify.sh could not run (exit {proc.returncode}):\n{out}"
+    return proc.returncode, out
 
 
 def verify_digest(issues: int, output: str, max_fail_lines: int = 40) -> str:
@@ -575,7 +594,9 @@ def main() -> int:
         # certifying check never depends on an agent choosing to run it.
         verify_issues, verify_out = run_verify(target, args.dry_run)
         digest = verify_digest(verify_issues, verify_out)
-        if verify_issues == 0:
+        if args.dry_run:
+            F.log(f"loop: verify.sh after iteration {n}: not run (--dry-run)")
+        elif verify_issues == 0:
             F.log(f"loop: verify.sh after iteration {n}: PASS (0 issues)")
         elif verify_issues < 0:
             F.log(f"loop: verify.sh after iteration {n}: DID NOT RUN — {verify_out.strip()}")
