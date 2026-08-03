@@ -1,0 +1,26 @@
+# Tooling configuration only — this repo is a CLI pipeline you clone and run,
+# not a distributable package.
+#
+# Deliberately NO [build-system] / [project] table: the scaffolding entry point
+# is named `setup.py`, which setuptools treats as a legacy build script and will
+# execute during a build. Declaring a build backend here would make
+# `pip install .` run the architect scaffolder. If this ever needs to be
+# installable, rename `setup.py` first (e.g. to `scaffold.py`).
+#
+# There are no runtime dependencies, deliberately: the pipeline shells out to an
+# agent CLI and to `lake`, and everything else is the standard library, so
+# reproducing a published result needs no Python environment to resolve.
+
+[tool.ruff]
+line-length = 96
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "UP"]
+# Prompt strings are long by nature and wrap badly; line length is a review
+# matter here, not a linter one.
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests import the modules under test after a sys.path insert.
+"tests/*" = ["E402"]
