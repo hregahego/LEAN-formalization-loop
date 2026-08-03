@@ -2,7 +2,7 @@
   "agent_cli": "claude",
   "claude_bin": "claude",
   "codex_bin": "codex",
-  "model": "opus",
+  "model": "claude-opus-5",
   "stall_window": 16,
   "crux_recur_limit": 16,
   "timeouts": {
