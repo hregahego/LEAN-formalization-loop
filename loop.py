@@ -211,6 +211,38 @@ def run_workers(target: str, n: int, agents: list[int], model, dry_run, log_dir)
     return F.run_agents_parallel(specs, max_workers=4)
 
 
+def confirm_complete(target: str, n: int, model, log_dir, digest: str) -> bool:
+    """Run the final full-project audit and re-measure the harness.
+
+    Both routes to "done" end here — the Review agent declaring COMPLETE, and the
+    Plan agent assigning no workers because every frozen theorem is discharged —
+    so the two cannot drift apart. The harness is re-run AFTER the audit because
+    the audit is the last thing to touch the tree, and COMPLETE must rest on a
+    fresh measurement rather than on the digest taken before it.
+    """
+    final = run_review(target, n, full=True, model=model, dry_run=False,
+                       log_dir=log_dir, verify_digest_text=digest)
+    verdict = F.review_verdict(final, os.path.join(target, "REVIEW.md"), n)
+    issues, _ = run_verify(target)
+    F.log(f"loop: final audit verdict: {verdict}; verify.sh: "
+          + ("PASS (0 issues)" if issues == 0
+             else "could not run" if issues < 0 else f"{issues} issue(s)"))
+
+    if verdict == "COMPLETE" and issues == 0:
+        return True
+    # Report which condition actually failed. Saying "the audit did not confirm"
+    # when it did — and the harness was the problem — sends the reader to the
+    # wrong file.
+    if verdict != "COMPLETE":
+        F.log("loop: the final audit did NOT confirm COMPLETE"
+              + (" (no verdict could be read from it)" if verdict is None else "")
+              + " — see REVIEW.md.")
+    if issues != 0:
+        F.log("loop: verify.sh does not pass, so this is not COMPLETE regardless "
+              "of the audit's verdict.")
+    return False
+
+
 def run_review(target: str, n: int, full: bool, model, dry_run, log_dir,
                verify_digest_text: str = ""):
     full_block = F.load_prompt("loop_full_audit") + "\n" if full else ""
@@ -302,22 +334,14 @@ def main() -> int:
                     # DONE: all frozen theorems are discharged in Solution.lean.
                     # Confirm with a full-project audit, then report COMPLETE.
                     F.log(f"loop: Plan assigned no workers and all {n_frozen} frozen "
-                          "theorems are discharged — running the harness and a final "
-                          "audit to confirm COMPLETE (not stuck).")
-                    done_issues, done_out = run_verify(target)
-                    F.log(f"loop: verify.sh: {'PASS (0 issues)' if done_issues == 0 else str(done_issues) + ' issue(s)'}")
-                    final = run_review(target, n, full=True, model=args.model,
-                                       dry_run=False, log_dir=log_dir,
-                                       verify_digest_text=verify_digest(done_issues, done_out))
-                    if (F.review_verdict(final, review_path, n) == "COMPLETE"
-                            and done_issues == 0):
+                          "theorems are discharged — confirming COMPLETE (not stuck).")
+                    issues, out = run_verify(target)
+                    if confirm_complete(target, n, args.model, log_dir,
+                                        verify_digest(issues, out)):
                         F.log("FORMALIZATION COMPLETE — verify.sh passes with 0 issues.")
                         return 0
-                    if done_issues != 0:
-                        F.log("loop: all frozen theorems are discharged but verify.sh "
-                              "does NOT pass — not reporting COMPLETE.")
-                    F.log("loop: all frozen theorems discharged, but the final audit "
-                          "did NOT confirm COMPLETE — treating as STUCK; inspect REVIEW.md.")
+                    F.log("loop: every frozen theorem is discharged but completion "
+                          "could not be confirmed — stopping for inspection.")
                     return 3
                 # STUCK: a genuine wall. Because every agent is a fresh, context-free
                 # session, the NEXT iteration would be identical, so stop gracefully
@@ -381,27 +405,14 @@ def main() -> int:
 
         if verdict == "COMPLETE":
             F.log("loop: Review reports COMPLETE — running final full-project audit.")
-            final = run_review(target, n, full=True, model=args.model,
-                               dry_run=False, log_dir=log_dir,
-                               verify_digest_text=digest)
-            final_verdict = F.review_verdict(final, review_path, n)
-            F.log(f"loop: final audit verdict: {final_verdict}")
-            # Re-run the harness after the final audit: it is the last thing to
-            # touch the tree, and COMPLETE must rest on a fresh measurement.
-            final_issues, _ = run_verify(target)
-            if final_verdict == "COMPLETE" and final_issues == 0:
+            if confirm_complete(target, n, args.model, log_dir, digest):
                 F.log("==================================================")
                 F.log("FORMALIZATION COMPLETE — verify.sh passes with 0 issues.")
                 F.log("Final findings in REVIEW.md.")
                 F.log("==================================================")
                 return 0
-            if final_verdict == "COMPLETE" and final_issues != 0:
-                F.log(f"loop: final audit said COMPLETE but verify.sh reports "
-                      f"{final_issues} issue(s) — NOT complete. Continuing.")
-            else:
-                F.log("loop: final audit DOWNGRADED the verdict to INCOMPLETE. "
-                      "Continuing the loop to address its follow-ups.")
-                # fall through to next iteration
+            F.log("loop: completion not confirmed — continuing to address the "
+                  "audit's follow-ups.")
 
         # -- Objective stall guard (agent-independent) --------------------- #
         # The Plan agent can almost always invent one more "support lemma", so

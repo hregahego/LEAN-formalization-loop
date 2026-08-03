@@ -99,9 +99,15 @@ exits non-zero so an unfaithful skeleton is never handed to `loop.py`.
    `## Iteration N` block to `TASKS.md`, one `Agent k:` line per active worker.
 2. **Workers** — up to 4 in parallel — each does its assigned formalization and
    appends a timestamped report to `PROGRESS.md`.
-3. **Review** re-runs the build / `#print axioms` / `verify.sh`, audits the work,
-   and appends a `## Review -- Iteration N` block ending in
-   `Verdict: COMPLETE | INCOMPLETE`. Every 5th iteration is a full-project audit.
+3. **`verify.sh`** is run by the orchestrator — never by an agent — and its
+   result is handed to Review as ground truth. Whether the certifying check runs
+   is not left to an agent's discretion, and a worker cannot suppress or reword
+   what it reports.
+4. **Review** audits what the harness cannot see (faithfulness against
+   `SKETCH.md`, weakened statements, faked `✅`) and appends a
+   `## Review -- Iteration N` block ending in `Verdict: COMPLETE | INCOMPLETE`.
+   Every 5th iteration is a full-project audit. A `COMPLETE` verdict that
+   contradicts the harness is overridden — the measurement outranks the claim.
 
 The loop ends when a verdict is `COMPLETE` (confirmed by a final full-project
 audit). It runs unbounded by default (built for long overnight sessions); it is
@@ -116,8 +122,11 @@ force-quit.
 
 ### `USER_NOTES.md` — assumed-certificate axioms
 
-`setup.py` writes `USER_NOTES.md` for problem-specific guidance; **fill it in
-before `init.py`.** Its main use: if a fact is mathematically routine but
+`setup.py` writes `USER_NOTES.md` for problem-specific guidance. **Fill it in
+before `setup.py`** if this problem needs assumed axioms or a mandated proof
+route: the architect agent reads it, and it is the only point at which the
+"mandatory axioms" check can be configured. Seeding it later (before `init.py`)
+still permits the axioms, but leaves that check off. Its main use: if a fact is mathematically routine but
 prohibitively expensive to *prove* in Lean (a large factorization, an explicit
 interpolant, a numeric certificate), permit it as a Lean `axiom` here. `verify.sh`
 then allows exactly those named axioms and bans all others. By default the pipeline
@@ -134,12 +143,28 @@ prompts + `verify.sh`):
 - Frozen statements must render the sketch **faithfully and minimally** — no added
   hypotheses, no `∀`→examples specialization, no equality→one-sided inclusion, no
   surrogate definitions.
-- Banned keywords: `sorry` (outside `Theorems.lean`), `native_decide`, `admit`,
-  `axiom`, `unsafe`, `implemented_by`, `ofReduceBool`. Every solved theorem's
+- Banned keywords: `sorry` (outside `Theorems.lean`), `sorryAx`, `native_decide`,
+  `admit`, `unsafe`, `implemented_by`, `ofReduceBool`, and
+  `debug.skipKernelTC` (which disables kernel re-typechecking and leaves no trace
+  in `#print axioms`). The scanner is comment- *and* string-literal-aware, so a
+  keyword cannot be hidden inside either. An `axiom` declaration is not banned
+  outright but allowlist-gated, and modifier forms (`private axiom`, `@[simp]
+  axiom`, …) are detected. Every solved theorem's
   `#print axioms` must stay within `{propext, Classical.choice, Quot.sound}` (plus
   any axioms you explicitly permit in `USER_NOTES.md`).
 - `PROGRESS.md`, `TASKS.md`, `REVIEW.md` are append-only; Review independently
   re-verifies every `✅` rather than trusting the log.
+- **The harness and its configuration are pinned.** `scripts/verify.sh`,
+  `scripts/harness.json`, `scripts/frozen.sha256` and `scripts/ALLOWED_AXIOMS.txt`
+  all live in the workspace the agents edit, so their SHA-256 hashes are recorded
+  in `scripts/control_manifest.sha256` and re-checked before every harness run. A
+  changed control file means the run reports "could not verify", never a pass.
+  Absence is pinned too, so a control file cannot be *created* later unnoticed.
+  This is tamper-evident, not tamper-proof: the manifest shares the workspace.
+- **The frozen statements are bound to what is audited.** For every frozen
+  theorem the harness generates and compiles
+  `example : @P.<t> = @P.Solution.<t> := rfl`, so the declaration whose axioms are
+  checked provably has the frozen statement's type.
 
 ## Configuration (`config.json`)
 
@@ -153,11 +178,11 @@ defaults.
 | `model` | `null` | model passed to the CLI (or use `--model`) |
 | `stall_window` | `16` | stop if no new frozen theorem is discharged for this many consecutive iterations |
 | `crux_recur_limit` | `16` | stop if one crux is named as the "Next:" step this many times without closing |
-| `timeouts.{setup,init,plan,worker,review}` | see below | per-agent wall-clock caps, in seconds |
+| `timeouts.{setup,init,plan,worker,review,verify}` | see below | per-agent wall-clock caps, in seconds |
 
 Each agent is guarded by a **per-agent wall-clock watchdog** (a total-runtime cap,
 not an idle timeout): `setup` `3600`, and `init` / `plan` / `worker` / `review`
-`10800` each. A cold Mathlib `cache get` + build makes `init` slow, so its cap is
+`10800` each; `verify` `3600`. A cold Mathlib `cache get` + build makes `init` slow, so its cap is
 generous. Workers run in parallel, so one iteration's worst case ≈
 `plan + worker + review`.
 
