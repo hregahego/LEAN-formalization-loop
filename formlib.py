@@ -134,6 +134,45 @@ def read_text(path: str) -> str:
         return ""
 
 
+PROMPTS_DIR = os.path.join(_SCRIPT_DIR, "prompts")
+
+# Placeholders are `@@NAME@@`, not `{name}`. The prompts contain literal JSON and
+# Lean braces, so a brace-based template would need escaping that is easy to get
+# wrong and impossible to see — one file here previously had to use `.replace`
+# while another used `.format` with `{{ }}` doubling, and they could not be
+# unified without corrupting one of them. `@@NAME@@` cannot collide with prompt
+# content, so there is one mechanism and no escaping rules.
+_PROMPT_MARKER = re.compile(r"@@([A-Z_]+)@@")
+
+
+def load_prompt(name: str, **params: str) -> str:
+    """Read prompts/<name>.md and substitute every @@MARKER@@.
+
+    Fails loudly on an unknown parameter or an unsubstituted marker: a prompt
+    that silently ships `@@N@@` to an agent is a bug that shows up as confusing
+    model behaviour, far from its cause.
+    """
+    path = os.path.join(PROMPTS_DIR, name + ".md")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+    except OSError as exc:
+        sys.exit(f"ERROR: cannot read prompt {name!r}: {exc}")
+
+    wanted = set(_PROMPT_MARKER.findall(text))
+    given = {k.upper() for k in params}
+    if given - wanted:
+        raise KeyError(f"prompt {name!r} has no marker(s) for: "
+                       f"{sorted(given - wanted)}")
+    for key, value in params.items():
+        text = text.replace(f"@@{key.upper()}@@", str(value))
+
+    missing = set(_PROMPT_MARKER.findall(text))
+    if missing:
+        raise KeyError(f"prompt {name!r} left unsubstituted: {sorted(missing)}")
+    return text
+
+
 # --------------------------------------------------------------------------- #
 # Control-file integrity
 #

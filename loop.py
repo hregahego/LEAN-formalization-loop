@@ -118,256 +118,6 @@ def stop_requested() -> bool:
 
 
 # --------------------------------------------------------------------------- #
-# Prompts
-# --------------------------------------------------------------------------- #
-
-PLAN_PROMPT = """\
-You are the PLAN agent for iteration {n} of an autonomous Lean 4 + Mathlib
-formalization, coordinating up to 4 parallel WORKER agents (Agent 1..4).
-
-Read, in this order (do not skip any):
-  ./REVIEW.md     -- the auditor's verdicts/findings on prior iterations; its
-                     "Required follow-ups" are your highest priority.
-  ./PROGRESS.md   -- append-only log: what is ✅ proved, 🔧 in progress,
-                     ⚠️ blocked, 📝 decided.
-  ./SKETCH.md     -- the mathematical source of truth.
-  ./BLUEPRINT.md  -- the Lean decomposition: stages, dependency order, and the
-                     per-stage cheat-watch boxes.
-  ./USER_NOTES.md -- the user's special instructions (e.g. any assumed-certificate
-                     axioms permitted for this problem). Honor them.
-
-Decide the single most valuable BATCH of work for THIS iteration that respects
-the dependency graph in BLUEPRINT (never assign work whose prerequisites are not
-yet ✅; first clear any "Required follow-ups" from REVIEW.md). Split it across up
-to 4 workers with NON-OVERLAPPING files so they run in parallel without
-colliding. If the next useful step needs fewer than 4 workers, assign only those
-(e.g. only Agent 1 and Agent 2) and omit the rest.
-
-Prefer work that makes NET PROGRESS. Reductions are welcome and often essential —
-breaking a hard goal into simpler pieces is how a formalization advances — so do
-NOT refuse a task just because it is a reduction. A reduction COUNTS as progress
-when it lands the goal on something STRICTLY SIMPLER: fewer hypotheses or
-quantifiers, a more elementary or explicit object, a step now reducible to a named
-Mathlib lemma, or one abstraction layer removed (best of all, it discharges a leaf
-outright). What does NOT count is a LATERAL re-expression: replacing a goal by an
-EQUIVALENT of the same difficulty — the equivalence cheap in BOTH directions, the
-real analytic/combinatorial content untouched and merely renamed. That is the
-"re-wrapping" that silently stalls a loop.
-
-A single reduction rarely reveals which kind it is — both look like "G became G'".
-The distinction is visible only over TIME, against history, which a fresh worker
-cannot see but you can: read PROGRESS.md. If the crux a proposed task would produce
-is inter-derivable with a crux already named as a "Next:" step in earlier
-iterations (the same value/bound/identity wearing a new name), that goal is
-CIRCLING — do not assign another lap. If the task lands a genuinely NEW,
-strictly-simpler crux, or discharges a leaf, assign it. An objective stall guard
-also stops the loop when one crux recurs across the run, so you need not be
-paranoid — just do not KNOWINGLY assign a lateral re-expression of a crux already
-reduced before.
-
-Before assigning, for each remaining BLUEPRINT goal state its precise CURRENT crux
-and ask: is there a step that discharges a leaf or produces a crux STRICTLY simpler
-than everything already recorded for that goal? Assign workers to the goals that
-pass; a hard/large/slow goal with such a step IS workable.
-
-Assign NO workers ("Agent k:" list omitted entirely) only when every remaining goal
-is walled: for each you can name the precise crux, and no available step yields a
-strictly-simpler crux or discharges a leaf — the only moves are lateral
-re-expressions of an already-reduced crux, OR the crux needs unstated mathematics,
-a false/blocked frozen statement, or a certificate the user has not granted. You do
-NOT need prior REVIEW.md corroboration; if you can name the wall for every goal and
-no genuinely-simplifying step remains, stop now rather than assigning make-work.
-Make the "## Iteration {n}" block a concise STUCK note: for each remaining goal
-state the precise crux and what a human must change (a hint, a new strategy, the
-missing mathematical content, a fix to a false frozen statement, or an assumed
-certificate for USER_NOTES.md). "The next step is a reduction" is NOT a reason to
-stop; only "the next step is a LATERAL reduction of an already-reduced crux" is.
-
-APPEND (never edit or delete prior content) to ./TASKS.md EXACTLY this block,
-using this exact format so the orchestrator can parse it:
-
-## Iteration {n}
-<one or two lines: the goal of this iteration and which BLUEPRINT stage(s) it advances>
-
-Agent 1: <files this agent OWNS (exact paths under Proofs/) + the lemma/theorem names to produce + the path to follow + which already-✅ results it may use + the relevant SKETCH step and BLUEPRINT cheat-watch it must respect>
-Agent 2: <...>
-Agent 3: <...>
-Agent 4: <...>
-
-Rules:
-- Include an "Agent k:" line ONLY for workers active this iteration. Number them
-  from 1 with no gaps (use Agent 1, or Agent 1 + Agent 2, etc.).
-- Every task must be SELF-CONTAINED: a fresh agent with no memory must be able to
-  execute it from TASKS.md plus the named BLUEPRINT/SKETCH sections alone. Name
-  exact files and lemma names.
-- NEVER instruct a worker to edit Defs.lean or Theorems.lean, to weaken a frozen
-  statement, or to use a banned tactic.
-- Do NOT write proofs yourself. Only append the TASKS.md block.
-
-Finally, end your reply with a machine-readable trailer as the VERY LAST lines of
-your message — emit it exactly once, listing precisely the agent numbers you
-activated this iteration:
-
-<<<ORCH
-{{"iteration": {n}, "active_agents": [<the agent numbers you assigned, e.g. 1, 2>]}}
-ORCH>>>
-
-The list MUST match the "Agent k:" lines you appended (empty list `[]` if you
-assigned no workers).
-"""
-
-WORKER_PROMPT = """\
-You are WORKER Agent {k} for iteration {n} of an autonomous Lean 4 + Mathlib
-formalization. Your label for the log is "agent-iter{n}-{k}".
-
-ONBOARDING RITUAL (BLUEPRINT §5) -- do this BEFORE writing any code:
-1. Read ./TASKS.md and find "## Iteration {n}", then the line "Agent {k}: ...".
-   That line is YOUR assignment. Ignore the other agents' lines.
-2. Read ./PROGRESS.md end-to-end. Respect every ✅ (done -- reuse, don't redo),
-   🔧 (another agent holds it -- do NOT touch), ⚠️ (blocked), and 📝 (a fixed
-   modeling/proof decision you must follow).
-3. Read the BLUEPRINT.md stage(s) your task names -- INCLUDING the "Cheat watch"
-   box -- and the cited SKETCH.md step(s). Also skim ./USER_NOTES.md and
-   ./scripts/ALLOWED_AXIOMS.txt: the ONLY axioms you may depend on are the
-   standard three plus any names listed there (assumed certificates frozen in
-   Defs.lean). You may USE those; you may NOT introduce any new axiom.
-4. Append a `🔧 in progress` PROGRESS.md entry claiming your work (real UTC
-   timestamp from `date -u +"%Y-%m-%dT%H:%M:%SZ"`), so the other 3 agents don't
-   collide with you.
-
-THEN DO THE WORK:
-- Prioritize a FAITHFUL formalization above all else. Never weaken or trivialize
-  a frozen statement; never edit Defs.lean or Theorems.lean; never add a
-  hypothesis to a frozen statement; never use a banned tactic (no `sorry` outside
-  Theorems.lean, no native_decide, admit, unsafe, implemented_by, ofReduceBool).
-  Do NOT introduce any new `axiom`. Keep `#print axioms` of anything you prove
-  within {{propext, Classical.choice, Quot.sound}} PLUS any axiom names listed in
-  ./scripts/ALLOWED_AXIOMS.txt (the user-permitted certificates); any OTHER axiom
-  is forbidden and will fail verify.sh.
-- Work ONLY on the file(s) your task assigns, to avoid colliding with the other
-  workers running in parallel right now.
-- Use the Lean tooling: edit, `lake build` your target module, read the goal /
-  search Mathlib, and iterate until your files compile cleanly -- OR until you
-  hit a GENUINE blocker (a real mathematical or Lean obstacle, not impatience or
-  a long build). Work straight through to completion; do NOT stop to ask
-  questions.
-
-WHEN FINISHED (success OR genuine blocker), APPEND to ./PROGRESS.md a timestamped
-entry in BLUEPRINT's mandated format:
-
-Write these lines FLUSH LEFT — no leading spaces, no `-` bullet, no `**bold**`.
-The orchestrator parses `Agent:` and `Next:` from column 0; an indented or
-decorated entry is silently unreadable and disables the stall guards.
-
-## <UTC timestamp> -- <stage/item you worked on>
-Agent: agent-iter{n}-{k}
-Status: ✅ proved | ⚠️ blocked | 🔧 in progress | 📝 decision
-Check: <#print axioms result, or lake build result, or n/a>
-Note: <what you did, key lemma used, or the EXACT failing goal/error that blocks you>
-Next: <what this unblocks / what a follow-up agent should do, with exact lemma & file names>
-
-Only mark `✅` what ACTUALLY compiles with a clean `#print axioms` -- never fake a
-✅. Finally, print a one-paragraph report of what you accomplished or what blocked
-you.
-"""
-
-REVIEW_PROMPT = """\
-You are the REVIEW / AUDIT agent for iteration {n} of an autonomous Lean 4
-formalization. You are INDEPENDENT of the workers and deliberately SKEPTICAL and
-ADVERSARIAL: assume a ✅ is wrong until you have reproduced it yourself.
-
-Read: ./PROGRESS.md (the workers' latest entries for iteration {n}), ./TASKS.md
-(what was assigned this iteration), ./SKETCH.md + ./BLUEPRINT.md (the
-faithfulness ground truth and the cheat-watch boxes), and ./USER_NOTES.md +
-./scripts/ALLOWED_AXIOMS.txt (the axioms the user explicitly permitted, if any).
-
-{verify_block}
-Audit by running the ACTUAL tooling -- do NOT trust PROGRESS.md's claims. Open
-the Lean files and run `lake build` / `#print axioms` on anything the harness
-result above does not already settle. Specifically check:
-- Does every ✅ from this iteration actually compile, with a clean `#print axioms`?
-  "Clean" = within {{propext, Classical.choice, Quot.sound}} PLUS exactly the
-  axiom names listed in scripts/ALLOWED_AXIOMS.txt. Flag any faked ✅, any axiom
-  NOT on that allowlist, and any allowed axiom whose Lean statement does not
-  faithfully match what USER_NOTES.md describes.
-- Are Defs.lean and Theorems.lean still byte-frozen (the SHA pins in
-  scripts/frozen.sha256 still match)? Flag any tampering with frozen files or
-  with earlier PROGRESS.md history.
-- Any banned tactic? Any frozen statement that was weakened, given an extra
-  hypothesis, specialized from `∀` to examples, or had an equality replaced by a
-  one-sided inclusion? Any definition that secretly trivializes the math vs
-  SKETCH.md? Any `sorry` outside Theorems.lean?
-- Did workers respect file ownership and append-only PROGRESS.md?
-- NET PROGRESS vs RE-WRAPPING: reductions ARE legitimate progress when they land a
-  strictly-simpler crux (fewer hypotheses/quantifiers, a more elementary object, a
-  named-library step, or a discharged leaf) — do NOT flag those as scaffolding.
-  Flag only LATERAL re-wrapping: a ✅ whose "Next:" crux is inter-derivable with a
-  crux already named as the "Next:" step in earlier iterations (the same
-  value/bound/identity renamed, the hard content untouched). Compare this
-  iteration's "Next:" cruxes against earlier PROGRESS.md entries: if the SAME crux
-  has been the stated next step across several iterations while only equivalent
-  re-expressions land around it, the loop is CIRCLING A WALL — say so explicitly,
-  name the crux, and count the iterations it has recurred.
-{full_block}
-APPEND (append-only) to ./REVIEW.md EXACTLY this block:
-
-## Review -- Iteration {n}{full_tag}
-Auditor: review-iter{n}
-Checks run: <the verify.sh / lake build / #print axioms commands you actually ran and their results>
-Findings: <bullets: confirmed-good items, AND every cheat / regression / faked ✅ / faithfulness gap, each with file:line; AND a NET-PROGRESS verdict for the iteration — "net progress toward <goal>" or "SCAFFOLDING ONLY: circled crux `<name>` for N iterations">
-Required follow-ups: <concrete fixes the Plan agent must assign next iteration, or "none". When the iteration was scaffolding-only on a recurring wall, write "STALLED on `<crux>`: <the direct mathematical attempt needed, or the human decision required>" so the planner does not re-assign more indirection.>
-Verdict: COMPLETE | INCOMPLETE
-
-Set "Verdict: COMPLETE" ONLY IF ALL of these hold: every frozen theorem is proved
-sorry-free; the harness result quoted above reports 0 issues; and the
-formalization faithfully matches SKETCH.md with no detected cheat or weakening.
-OTHERWISE set "Verdict: INCOMPLETE". Be conservative: when in any doubt,
-INCOMPLETE.
-
-A COMPLETE verdict while the harness reports issues will be OVERRIDDEN by the
-orchestrator, which re-checks the harness itself — so claiming it costs an
-iteration and gains nothing.
-
-Finally, end your reply with a machine-readable trailer as the VERY LAST lines of
-your message — emit it exactly once, and its verdict MUST equal the "Verdict:"
-line you appended to REVIEW.md:
-
-<<<ORCH
-{{"iteration": {n}, "verdict": "COMPLETE"}}
-ORCH>>>
-
-(use "INCOMPLETE" instead of "COMPLETE" when not done). Before the trailer, print
-a one-paragraph summary of your audit.
-"""
-
-VERIFY_BLOCK = """\
-== scripts/verify.sh result for THIS iteration (run by the orchestrator) ==
-
-The orchestrator ran the harness itself after the workers finished, so this is
-ACTUAL output that no worker could edit, suppress, or reword:
-
-{digest}
-
-Treat it as objective ground truth for the build, axiom, SHA-pin and gate checks,
-and quote it on your "Checks run:" line. Do not re-run verify.sh just to confirm
-it; spend your effort on what the harness CANNOT see — faithfulness against
-SKETCH.md, weakened or trivialized statements, faked ✅, and net progress.
-
-"""
-
-FULL_AUDIT_BLOCK = """\
-FULL-PROJECT AUDIT (this is a checkpoint/final audit): review the ENTIRE
-formalization end-to-end, not just this iteration. The harness result quoted above
-already covers ALL theorems, so do not re-run it. Instead re-read every frozen
-statement in Theorems.lean against SKETCH.md
-for faithfulness, and hunt for any LARGE-SCALE trivialization, cheat, or
-weakening that may have accumulated across iterations (a definition quietly
-softened, a `∀` that became a special case, an axiom-dirty proof, a one-sided
-inclusion standing in for an equality). Report everything you find.
-"""
-
-
-# --------------------------------------------------------------------------- #
 # Phases
 # --------------------------------------------------------------------------- #
 
@@ -440,7 +190,7 @@ def verify_digest(issues: int, output: str, max_fail_lines: int = 40) -> str:
 def run_plan(target: str, n: int, model, dry_run, log_dir):
     # JSON mode: we read the active-agents trailer straight from the result.
     return F.run_agent(
-        f"iter{n:03d}-plan", PLAN_PROMPT.format(n=n), cwd=target,
+        f"iter{n:03d}-plan", F.load_prompt("loop_plan", n=n), cwd=target,
         model=model, timeout=F.PLAN_TIMEOUT, log_dir=log_dir, dry_run=dry_run,
         output_format="json",
     )
@@ -451,7 +201,7 @@ def run_workers(target: str, n: int, agents: list[int], model, dry_run, log_dir)
     for k in agents:
         specs.append(dict(
             label=f"iter{n:03d}-worker{k}",
-            prompt=WORKER_PROMPT.format(n=n, k=k),
+            prompt=F.load_prompt("loop_worker", n=n, k=k),
             cwd=target, model=model, timeout=F.WORKER_TIMEOUT,
             log_dir=log_dir, dry_run=dry_run,
         ))
@@ -460,11 +210,11 @@ def run_workers(target: str, n: int, agents: list[int], model, dry_run, log_dir)
 
 def run_review(target: str, n: int, full: bool, model, dry_run, log_dir,
                verify_digest_text: str = ""):
-    prompt = REVIEW_PROMPT.format(
-        n=n,
-        verify_block=(VERIFY_BLOCK.format(digest=verify_digest_text)
-                      if verify_digest_text else ""),
-        full_block=(FULL_AUDIT_BLOCK + "\n") if full else "",
+    full_block = F.load_prompt("loop_full_audit") + "\n" if full else ""
+    prompt = F.load_prompt(
+        "loop_review", n=n,
+        verify_block=F.load_prompt("loop_verify_block", digest=verify_digest_text),
+        full_block=full_block,
         full_tag="  (FULL PROJECT AUDIT)" if full else "",
     )
     label = f"iter{n:03d}-review" + ("-FULL" if full else "")
