@@ -25,7 +25,7 @@ def _workspace():
     """A scaffolded-looking workspace with all four control files."""
     d = tempfile.mkdtemp()
     os.makedirs(os.path.join(d, "scripts"))
-    _write(os.path.join(d, "scripts", "verify.sh"), "#!/usr/bin/env bash\nexit 0\n")
+    _write(os.path.join(d, "scripts", "verify.py"), "raise SystemExit(0)\n")
     _write(os.path.join(d, "scripts", "harness.json"),
            json.dumps({"project": "P", "theorems": ["a"]}))
     _write(os.path.join(d, "scripts", "frozen.sha256"), "abc  P/Defs.lean\n")
@@ -40,7 +40,7 @@ class ControlManifest(unittest.TestCase):
         self.assertEqual(F.check_control_manifest(d), [])
 
     def test_detects_modification_of_each_control_file(self):
-        for name in ("verify.sh", "harness.json", "frozen.sha256", "ALLOWED_AXIOMS.txt"):
+        for name in ("verify.py", "harness.json", "frozen.sha256", "ALLOWED_AXIOMS.txt"):
             with self.subTest(name):
                 d = _workspace()
                 F.write_control_manifest(d)
@@ -57,7 +57,7 @@ class ControlManifest(unittest.TestCase):
         self.assertTrue(any("MISSING" in p for p in F.check_control_manifest(d)))
 
     def test_detects_creation_of_a_file_that_was_absent_when_pinned(self):
-        """verify.sh honours ALLOWED_AXIOMS.txt whenever it exists, so a file
+        """verify.py honours ALLOWED_AXIOMS.txt whenever it exists, so a file
         left uncreated is an open door unless its absence is pinned too."""
         d = _workspace()
         os.remove(os.path.join(d, "scripts", "ALLOWED_AXIOMS.txt"))
@@ -77,26 +77,26 @@ class RunVerifyContract(unittest.TestCase):
 
     def _harness(self, body):
         d = _workspace()
-        p = os.path.join(d, "scripts", "verify.sh")
+        p = os.path.join(d, "scripts", "verify.py")
         _write(p, body)
         os.chmod(p, 0o755)
         F.write_control_manifest(d)
         return d
 
     def test_zero_exit_is_a_pass(self):
-        d = self._harness("#!/usr/bin/env bash\necho ok\nexit 0\n")
+        d = self._harness("print('ok')\nraise SystemExit(0)\n")
         self.assertEqual(loop.run_verify(d)[0], 0)
 
     def test_small_exit_is_an_issue_count(self):
-        d = self._harness("#!/usr/bin/env bash\necho bad\nexit 2\n")
+        d = self._harness("print('bad')\nraise SystemExit(2)\n")
         self.assertEqual(loop.run_verify(d)[0], 2)
 
     def test_preflight_exit_64_means_did_not_run(self):
-        d = self._harness("#!/usr/bin/env bash\necho ERROR\nexit 64\n")
+        d = self._harness("print('ERROR')\nraise SystemExit(64)\n")
         self.assertEqual(loop.run_verify(d)[0], -1)
 
     def test_tampering_is_detected_before_the_harness_runs(self):
-        d = self._harness("#!/usr/bin/env bash\necho ok\nexit 0\n")
+        d = self._harness("print('ok')\nraise SystemExit(0)\n")
         with open(os.path.join(d, "scripts", "ALLOWED_AXIOMS.txt"), "a") as fh:
             fh.write("P.sneaky\n")
         issues, out = loop.run_verify(d)
@@ -107,7 +107,7 @@ class RunVerifyContract(unittest.TestCase):
         self.assertEqual(loop.run_verify(tempfile.mkdtemp())[0], -1)
 
     def test_dry_run_does_not_execute_and_does_not_claim_a_pass(self):
-        d = self._harness("#!/usr/bin/env bash\nexit 3\n")
+        d = self._harness("raise SystemExit(3)\n")
         issues, out = loop.run_verify(d, dry_run=True)
         self.assertIn("dry-run", out)
         self.assertIn("dry-run", loop.verify_digest(issues, out))

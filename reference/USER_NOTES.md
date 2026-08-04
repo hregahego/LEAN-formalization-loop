@@ -27,7 +27,7 @@ it, but ONLY if you describe it here.
 
 > **Axioms, not hypotheses.** A certificate you want to assume must be introduced
 > as an `axiom` (so it shows up in `#print axioms` and is checked deterministically
-> by `verify.sh`). Do NOT bolt it onto a frozen theorem as a hypothesis `(h : …)`
+> by `verify.py`). Do NOT bolt it onto a frozen theorem as a hypothesis `(h : …)`
 > — added hypotheses remain forbidden and the faithfulness gate will reject them.
 
 For each axiom you permit, describe in plain words:
@@ -39,7 +39,7 @@ For each axiom you permit, describe in plain words:
 
 `init.py` reads this section, declares the corresponding `axiom`(s) in
 `Defs.lean` with faithful statements, and writes their fully-qualified names into
-`scripts/ALLOWED_AXIOMS.txt`. From then on `verify.sh` permits exactly those
+`scripts/ALLOWED_AXIOMS.txt`. From then on `verify.py` permits exactly those
 axiom names (in addition to the standard three) and **bans every other axiom**.
 
 <!-- Describe the axioms you allow below, or write "None — no assumed axioms." -->

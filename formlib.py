@@ -193,7 +193,7 @@ def load_prompt(name: str, **params: str) -> str:
 # removes is the silent single-file edit, which is the realistic failure.
 # --------------------------------------------------------------------------- #
 
-CONTROL_FILES = ("scripts/verify.sh", "scripts/harness.json",
+CONTROL_FILES = ("scripts/verify.py", "scripts/harness.json",
                  "scripts/frozen.sha256", "scripts/ALLOWED_AXIOMS.txt")
 CONTROL_MANIFEST = "scripts/control_manifest.sha256"
 # Stands where a hash would go, recording that a control file did NOT exist when
@@ -213,7 +213,7 @@ def sha256_file(path: str) -> str | None:
 def write_control_manifest(target: str) -> list[str]:
     """Pin every control file that currently exists. Returns the pinned paths.
 
-    Called after setup (verify.sh + harness.json) and again after init has
+    Called after setup (verify.py + harness.json) and again after init has
     written frozen.sha256 and ALLOWED_AXIOMS.txt, so the manifest always
     describes the phase that just completed.
     """
@@ -221,7 +221,7 @@ def write_control_manifest(target: str) -> list[str]:
     for rel in CONTROL_FILES:
         digest = sha256_file(os.path.join(target, rel))
         if digest is None:
-            # Pin the ABSENCE too. verify.sh honours ALLOWED_AXIOMS.txt whenever
+            # Pin the ABSENCE too. verify.py honours ALLOWED_AXIOMS.txt whenever
             # it exists, so a file left uncreated is an open door: a worker could
             # add one later and, if absence went unrecorded, nothing would notice.
             lines.append(f"{_ABSENT}  {rel}")
@@ -626,56 +626,37 @@ def verdict_for_iteration(review_path: str, n: int) -> str | None:
 # more "support lemma". These helpers give loop.py an objective, agent-independent
 # progress metric so it can detect a stall from the repository itself.
 
-# `theorem <name>` at top level (not inside a block comment / not doc-commented
-# away). We approximate "actually discharged" as: the name appears as a top-level
-# `theorem <name>` in Solution.lean AND is assigned a proof term (`:= ...`) rather
-# than left `sorry`. Solution.lean is the single source of truth for what has been
-# genuinely exposed as a clean, frozen-signature theorem.
-def _solution_frozen_names(target: str) -> list[str]:
-    """The frozen theorem names, read from scripts/verify.sh's ALL_THEOREMS.
+def harness_config(target: str) -> dict:
+    """scripts/harness.json — the single source of per-problem configuration.
 
-    Project-agnostic: the names come from the harness-generated verify.sh, never
-    hardcoded. If ALL_THEOREMS cannot be parsed (e.g. a verify.sh refactor), returns
-    [] so the progress signal reads 0 and the stall guard surfaces the broken
-    harness — rather than silently assuming another project's theorem names."""
-    verify = read_text(os.path.join(target, "scripts", "verify.sh"))
-    m = re.search(r"ALL_THEOREMS=\(", verify)
-    if m:
-        # Strip `#` comments BEFORE locating the closing paren: the stage comments
-        # inside the array routinely contain parens (e.g. "... lie in Int(D)"), and
-        # stopping at the first one silently truncates the list — a short list caps
-        # the progress signal and reads as a stall rather than as a broken parse.
-        rest = re.sub(r"#[^\n]*", "", verify[m.end():])
-        close = rest.find(")")
-        if close != -1:
-            names = re.findall(r'"([^"]+)"', rest[:close])
-            if names:
-                return names
-    log("warning: could not parse ALL_THEOREMS from scripts/verify.sh — "
-        "progress signal will read 0")
-    return []
-
-
-def _project_name(target: str) -> str | None:
-    """The project namespace/directory name, read from scripts/verify.sh's
-    `PROJECT="..."` line. This is what `verify.sh` itself uses, so it is the
-    authoritative source; falling back to a directory scan for a `Solution.lean`
-    keeps the signal working even if `PROJECT=` is absent. Returns None only if no
-    project directory can be identified (then `progress_signal` reports 0)."""
-    verify = read_text(os.path.join(target, "scripts", "verify.sh"))
-    m = re.search(r'(?m)^\s*PROJECT\s*=\s*"?([A-Za-z0-9_]+)"?', verify)
-    if m:
-        return m.group(1)
-    # Fallback: the (single) top-level directory that contains a Solution.lean.
+    This used to be recovered by regex from the generated harness, which meant a
+    `)` inside one of the architect's stage comments could truncate the theorem
+    list and cap the progress signal. The values were always available here as
+    structured data; there is nothing to parse.
+    """
     try:
-        for name in sorted(os.listdir(target)):
-            if name.startswith(".") or name == "scripts":
-                continue
-            if os.path.isfile(os.path.join(target, name, "Solution.lean")):
-                return name
-    except OSError:
-        pass
-    return None
+        with open(os.path.join(target, "scripts", "harness.json"),
+                  encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def frozen_theorem_names(target: str) -> list[str]:
+    """The frozen theorem names, in the order the stages prove them."""
+    names = harness_config(target).get("theorems")
+    if not isinstance(names, list) or not names:
+        log("warning: scripts/harness.json lists no theorems — the progress "
+            "signal will read 0")
+        return []
+    return [n for n in names if isinstance(n, str)]
+
+
+def project_name(target: str) -> str | None:
+    """The project namespace / source directory name."""
+    project = harness_config(target).get("project")
+    return project if isinstance(project, str) and project else None
 
 
 def progress_signal(target: str) -> int:
@@ -685,17 +666,17 @@ def progress_signal(target: str) -> int:
     proved sorry-free, not the count of auxiliary lemmas. Scaffolding/wrapper/
     equivalence churn does NOT move this number, which is exactly what we want a
     stall detector to key on. Project-agnostic: the project directory is read from
-    verify.sh's `PROJECT=` (NOT hardcoded), so the signal works on any project the
+    verify.py's `PROJECT=` (NOT hardcoded), so the signal works on any project the
     harness set up, not only the one it was first developed on.
     """
-    proj = _project_name(target)
+    proj = project_name(target)
     if proj is None:
         return 0
     sol = read_text(os.path.join(target, proj, "Solution.lean"))
     if not sol:
         return 0
     count = 0
-    for name in _solution_frozen_names(target):
+    for name in frozen_theorem_names(target):
         # top-level `theorem <name>` (allow leading indentation but not a `--`/
         # `/-` comment prefix on the same construct — a plain regex on the token
         # is adequate because Solution.lean only ever *states* a frozen theorem

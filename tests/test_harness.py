@@ -1,226 +1,196 @@
-"""The verification harness itself.
+"""The verification harness, reference/scripts/verify.py.
 
-These exercise the SHIPPED reference/scripts/verify.sh — the banned-keyword
-scanner is extracted from its heredoc rather than copied, so the test cannot
-drift from the code it claims to cover.
+Every check is an ordinary Python function, so each is tested directly rather
+than by running the whole harness against a Lean toolchain.
 
-Checks needing a Lean toolchain (3, 4, 4b, 5, 5b) are not covered here; what is
-covered is every path where the harness could previously report success without
-having verified anything.
+What these pin above all is the invariant that broke repeatedly in the shell
+version this replaced: a check that finds nothing to parse must FAIL, never pass.
 """
+import importlib.util
+import json
 import os
-import re
-import subprocess
-import sys
 import tempfile
 import unittest
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-HARNESS = os.path.join(REPO, "reference", "scripts", "verify.sh")
-sys.path.insert(0, REPO)
-import setup as S  # noqa: E402
+HARNESS_PATH = os.path.join(REPO, "reference", "scripts", "verify.py")
 
-EX_PREFLIGHT = 64
+_spec = importlib.util.spec_from_file_location("verify_harness", HARNESS_PATH)
+verify = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(verify)
 
-
-def _harness_source():
-    with open(HARNESS, encoding="utf-8") as fh:
-        return fh.read()
+DEFAULT_SOURCES = {"Defs.lean": "-- defs\n",
+                   "Theorems.lean": "theorem t_one : True := sorry\n"}
 
 
-def _scanner():
-    """The Check 2 scanner, exec'd out of the harness's own heredoc."""
-    src = _harness_source()
-    body = src[src.index("import os, re, sys, glob"):]
-    body = body[:body.index("\nPY\n")]
-    # The scanner reads its inputs from the environment, as the harness sets them.
-    env = {"SRC_DIR": "/nonexistent", "THEOREMS_FILE": "/nonexistent/Theorems.lean",
-           "ROOT_LEAN": "/nonexistent/P.lean", "ALLOWED_AXIOMS": ""}
-    saved = {k: os.environ.get(k) for k in env}
-    os.environ.update(env)
-    try:
-        ns = {}
-        exec(compile(body[:body.index("files = sorted")], "<check2>", "exec"),
-             {"os": os, "re": re, "sys": sys}, ns)
-        return ns
-    finally:
-        for k, v in saved.items():
-            if v is None:
-                os.environ.pop(k, None)
-            else:
-                os.environ[k] = v
+def _write(path, body):
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(body)
 
 
-class BannedKeywordScanner(unittest.TestCase):
-    def setUp(self):
-        ns = _scanner()
-        self.strip = ns["strip_comments"]
-        self.banned = ns["banned"]
+def _project(theorems=("t_one",), allowed="", pins=None, sources=None,
+             extra_config=None):
+    """A minimal project tree the harness can be pointed at."""
+    root = tempfile.mkdtemp()
+    os.makedirs(os.path.join(root, "scripts"))
+    os.makedirs(os.path.join(root, "P"))
+    config = {"project": "P", "theorems": list(theorems)}
+    config.update(extra_config or {})
+    _write(os.path.join(root, "scripts", "harness.json"), json.dumps(config))
+    _write(os.path.join(root, "scripts", "ALLOWED_AXIOMS.txt"), allowed)
+    for name, body in (sources or DEFAULT_SOURCES).items():
+        _write(os.path.join(root, "P", name), body)
+    if pins is None:
+        pins = "".join(
+            "%s  P/%s\n" % (verify.sha256_of(os.path.join(root, "P", f)), f)
+            for f in ("Defs.lean", "Theorems.lean"))
+    _write(os.path.join(root, "scripts", "frozen.sha256"), pins)
+    return root
 
+
+def _silent(*_args, **_kwargs):
+    """Swallow the PASS lines a check prints."""
+
+
+class CommentAndStringScanner(unittest.TestCase):
     def test_a_string_literal_cannot_hide_a_sorry(self):
-        """`def m : String := "/-"` once opened a block comment that swallowed
-        every following line, hiding a sorry from the scanner entirely."""
         code = 'def m : String := "/-"\ntheorem bad : True := by sorry\n'
-        self.assertRegex(self.strip(code), r"\bsorry\b")
+        self.assertIn("sorry", verify.strip_comments_and_strings(code))
 
     def test_a_sorry_inside_a_string_is_not_a_finding(self):
-        self.assertNotRegex(self.strip('def s := "sorry"\n'), r"\bsorry\b")
+        self.assertNotIn("sorry",
+                         verify.strip_comments_and_strings('def s := "sorry"\n'))
 
-    def test_real_block_comments_are_still_stripped(self):
-        self.assertNotRegex(self.strip("/- sorry -/\n"), r"\bsorry\b")
+    def test_real_block_comments_are_stripped(self):
+        self.assertNotIn("sorry", verify.strip_comments_and_strings("/- sorry -/\n"))
 
     def test_escaped_quotes_do_not_desync_the_parser(self):
         code = 'def s := "a\\"b"\ntheorem t : True := by sorry\n'
-        self.assertRegex(self.strip(code), r"\bsorry\b")
-
-    def test_kernel_typecheck_bypass_is_banned(self):
-        """debug.skipKernelTC leaves no trace in #print axioms, so nothing else
-        in the pipeline could catch it."""
-        self.assertIn("debug.skipKernelTC", self.banned)
+        self.assertIn("sorry", verify.strip_comments_and_strings(code))
 
 
-class AxiomDeclarationDetector(unittest.TestCase):
-    """`private axiom` is ordinary Lean; matching only a bare `axiom` at line
-    start let every modifier form through."""
-
-    def setUp(self):
-        src = _harness_source()
-        m = re.search(r'_AXIOM_RE = \(\s*(r"[^\n]*"\s*\n\s*r"[^\n]*"\s*\n\s*r"[^\n]*")\)',
-                      src)
-        self.assertIsNotNone(m, "could not find _AXIOM_RE in the harness")
-        self.rx = re.compile(eval("(" + m.group(1) + ")"))
-
-    def test_detects_every_modifier_form(self):
+class AxiomDeclarations(unittest.TestCase):
+    def test_every_modifier_form_is_detected(self):
         for decl in ["axiom foo : True", "private axiom foo : True",
                      "protected axiom foo : True", "noncomputable axiom foo : True",
                      "@[simp] axiom foo : True", "scoped axiom foo : True",
                      "  local axiom foo : True",
                      "@[simp, norm_cast] private axiom foo : True"]:
             with self.subTest(decl):
-                self.assertTrue(self.rx.search(decl))
+                self.assertTrue(verify.AXIOM_DECL.search(decl))
 
-    def test_does_not_fire_on_a_theorem_named_like_an_axiom(self):
-        self.assertIsNone(self.rx.search("theorem axiomatic : True := trivial"))
+    def test_a_theorem_named_like_an_axiom_is_not_a_finding(self):
+        self.assertIsNone(
+            verify.AXIOM_DECL.search("theorem axiomatic : True := trivial"))
 
 
-class PreflightExitCodes(unittest.TestCase):
-    """Pre-flight failures must be distinguishable from "ran and found N
-    problems" — 64, never 1."""
+class AxiomReportParsing(unittest.TestCase):
+    """`#print axioms` wraps long lists across lines. A line-oriented parse found
+    nothing on exactly the declarations carrying the most axioms — and reported
+    them as clean."""
 
-    def _run(self, args, project="Nope", allowed=None):
-        d = tempfile.mkdtemp()
-        os.makedirs(os.path.join(d, "scripts"))
-        src = re.sub(r"(?m)^PROJECT=.*$", 'PROJECT="%s"' % project, _harness_source(), 1)
-        p = os.path.join(d, "scripts", "verify.sh")
-        with open(p, "w", encoding="utf-8") as fh:
-            fh.write(src)
-        os.chmod(p, 0o755)
-        if allowed is not None:
-            # The required-files pre-flight runs first, so give it what it needs.
-            os.makedirs(os.path.join(d, project), exist_ok=True)
-            for f in ("Defs.lean", "Theorems.lean"):
-                with open(os.path.join(d, project, f), "w") as fh:
-                    fh.write("-- x\n")
-            with open(os.path.join(d, "scripts", "frozen.sha256"), "w") as fh:
-                fh.write("# pins\n")
-            with open(os.path.join(d, "scripts", "ALLOWED_AXIOMS.txt"), "w") as fh:
-                fh.write(allowed)
-        return subprocess.run([p] + args, capture_output=True, text=True, cwd=d)
+    def test_parses_a_wrapped_list(self):
+        raw = ("'P.Solution.t' depends on axioms: [propext,\n"
+               " Classical.choice,\n P.cert,\n sorryAx]")
+        name, blob = verify.AXIOM_REPORT.findall(" ".join(raw.split()))[0]
+        found = {a.strip() for a in blob.split(",")}
+        self.assertEqual(name, "P.Solution.t")
+        self.assertEqual(found, {"propext", "Classical.choice", "P.cert", "sorryAx"})
 
-    def test_unknown_option(self):
-        self.assertEqual(self._run(["--bogus"]).returncode, EX_PREFLIGHT)
+    def test_recognises_the_no_axioms_phrasing(self):
+        self.assertEqual(
+            verify.NO_AXIOMS.findall("'P.Solution.t' does not depend on any axioms"),
+            ["P.Solution.t"])
 
-    def test_missing_frozen_files(self):
-        self.assertEqual(self._run(["--no-log"]).returncode, EX_PREFLIGHT)
 
-    def test_allowlist_may_not_whitelist_a_proof_hole(self):
-        """One bad line in the generated allowlist would otherwise make Check 4
-        vacuous."""
+class FrozenPins(unittest.TestCase):
+    def test_matching_pins_pass(self):
+        self.assertEqual(
+            verify.check_frozen_pins(verify.Harness(_project()), _silent), [])
+
+    def test_edited_frozen_file_is_caught(self):
+        root = _project()
+        with open(os.path.join(root, "P", "Theorems.lean"), "a") as fh:
+            fh.write("-- edited\n")
+        failures = verify.check_frozen_pins(verify.Harness(root), _silent)
+        self.assertTrue(any("pin mismatch" in f for f in failures), failures)
+
+    def test_a_pins_file_with_no_pins_fails_rather_than_passing_silently(self):
+        failures = verify.check_frozen_pins(
+            verify.Harness(_project(pins="# only a comment\n")), _silent)
+        self.assertEqual(len(failures), 2, failures)
+        self.assertTrue(all("NOT pinned" in f for f in failures))
+
+    def test_pinning_only_one_frozen_file_fails(self):
+        root = _project()
+        digest = verify.sha256_of(os.path.join(root, "P", "Defs.lean"))
+        _write(os.path.join(root, "scripts", "frozen.sha256"),
+               "%s  P/Defs.lean\n" % digest)
+        failures = verify.check_frozen_pins(verify.Harness(root), _silent)
+        self.assertTrue(any("Theorems.lean is NOT pinned" in f for f in failures))
+
+
+class BannedKeywords(unittest.TestCase):
+    def test_clean_project_passes(self):
+        self.assertEqual(
+            verify.check_banned_keywords(verify.Harness(_project()), _silent), [])
+
+    def test_sorry_is_allowed_only_in_theorems(self):
+        root = _project(sources=dict(DEFAULT_SOURCES,
+                                     **{"Proofs.lean": "theorem h : True := by sorry\n"}))
+        failures = verify.check_banned_keywords(verify.Harness(root), _silent)
+        self.assertTrue(any("Proofs.lean" in f and "sorry" in f for f in failures))
+
+    def test_kernel_typecheck_bypass_is_banned(self):
+        root = _project(sources=dict(
+            DEFAULT_SOURCES,
+            **{"Defs.lean": "set_option debug.skipKernelTC true in\ndef d := 1\n"}))
+        failures = verify.check_banned_keywords(verify.Harness(root), _silent)
+        self.assertTrue(any("skipKernelTC" in f for f in failures))
+
+    def test_unlisted_axiom_is_caught_but_a_listed_one_is_not(self):
+        src = dict(DEFAULT_SOURCES, **{"Defs.lean": "private axiom cert : True\n"})
+        self.assertTrue(verify.check_banned_keywords(
+            verify.Harness(_project(sources=src)), _silent))
+        self.assertEqual(verify.check_banned_keywords(
+            verify.Harness(_project(sources=src, allowed="P.cert\n")), _silent), [])
+
+
+class AllowlistPoisoning(unittest.TestCase):
+    def test_a_proof_hole_may_never_be_allowlisted(self):
         for hole in ("sorryAx", "ofReduceBool"):
             with self.subTest(hole):
-                r = self._run(["--no-log"], allowed=hole + "\n")
-                self.assertEqual(r.returncode, EX_PREFLIGHT)
-                self.assertIn("proof hole", r.stdout + r.stderr)
+                with self.assertRaises(SystemExit) as caught:
+                    verify.Harness(_project(allowed=hole + "\n"))
+                self.assertEqual(caught.exception.code, verify.EX_PREFLIGHT)
 
 
-class FrozenPinCompleteness(unittest.TestCase):
-    """A pins file with no pin lines yielded zero loop iterations and a silent
-    PASS: Check 1 reported nothing while verifying nothing."""
+class ErrorLineDetection(unittest.TestCase):
+    """lake reports some diagnostics bare and others location-prefixed; anchoring
+    to the start of the line missed the second kind entirely."""
 
-    def _check1(self, pins):
-        d = tempfile.mkdtemp()
-        os.makedirs(os.path.join(d, "P"))
-        for f in ("Defs.lean", "Theorems.lean"):
-            with open(os.path.join(d, "P", f), "w") as fh:
-                fh.write("-- x\n")
-        with open(os.path.join(d, "pins"), "w") as fh:
-            fh.write(pins)
-        src = _harness_source()
-        block = src[src.index("# --- Check 1"):src.index("# --- Check 2")]
-        script = ("set -euo pipefail\nPROJECT=P\nREPO_ROOT=%s\nERRORS=0\n"
-                  "sha256_of() { shasum -a 256 \"$1\" | awk '{print $1}'; }\n"
-                  "PINS_FILE=%s/pins\n%s\necho ERRORS=$ERRORS\n" % (d, d, block))
-        r = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
-        return r.stdout
+    def test_matches_both_shapes(self):
+        out = "error: boom\n./P/Foo.lean:3:0: error: type mismatch\nfine\n"
+        self.assertEqual(len(verify.error_lines(out)), 2)
 
-    def test_empty_pins_file_fails_both_frozen_files(self):
-        out = self._check1("# only a comment\n")
-        self.assertIn("ERRORS=2", out)
-        self.assertIn("Defs.lean is NOT pinned", out)
-        self.assertIn("Theorems.lean is NOT pinned", out)
-
-    def test_pinning_only_one_file_still_fails(self):
-        out = self._check1("deadbeef  P/Defs.lean\n")
-        self.assertIn("Theorems.lean is NOT pinned", out)
+    def test_clean_output_has_none(self):
+        self.assertEqual(verify.error_lines("Build completed successfully.\n"), [])
 
 
-class HarnessLint(unittest.TestCase):
-    """The linter guards the two shapes in which a no-match grep aborts the
-    harness under `set -e`. Checking only command substitutions missed three
-    live bare pipelines on failure paths."""
+class HarnessConfig(unittest.TestCase):
+    def test_reads_check_4b_configuration(self):
+        root = _project(extra_config={"final_theorem": "t_one",
+                                      "mandatory_axioms": ["P.cert"]})
+        h = verify.Harness(root)
+        self.assertEqual(h.final_theorem, "t_one")
+        self.assertEqual(h.mandatory_axioms, ["P.cert"])
 
-    def test_shipped_harness_is_clean(self):
-        self.assertEqual(S._lint_verify_sh(HARNESS), [])
+    def test_absent_check_4b_configuration_disables_it(self):
+        self.assertEqual(verify.Harness(_project()).mandatory_axioms, [])
 
-    def test_catches_an_unguarded_command_substitution(self):
-        old = 'BUILD_ERRORS=$(echo "$BUILD_OUTPUT" | grep -c "^error:" || true)'
-        self.assertIn(old, _harness_source())
-        src = _harness_source().replace(old, old.replace(" || true", ""), 1)
-        self.assertTrue(self._lint_text(src))
-
-    def test_catches_an_unguarded_bare_pipeline(self):
-        src = _harness_source().replace(
-            "{ printf '%s\\n' \"$BOUT\" | grep -E 'error' | head -5; } || true",
-            "printf '%s\\n' \"$BOUT\" | grep -E 'error' | head -5", 1)
-        self.assertTrue(self._lint_text(src))
-
-    def _lint_text(self, src):
-        fd, p = tempfile.mkstemp(suffix=".sh")
-        os.close(fd)
-        with open(p, "w", encoding="utf-8") as fh:
-            fh.write(src)
-        return S._lint_verify_sh(p)
+    def test_qualifies_names_against_the_project_namespace(self):
+        self.assertEqual(verify.Harness(_project()).qualified("t"), "P.Solution.t")
 
 
 if __name__ == "__main__":
     unittest.main()
-
-
-class RegexAnchoring(unittest.TestCase):
-    """Python's `$` also matches before a trailing newline, so a whole-string
-    validator must use `\\Z`. A name carrying `\\n` would otherwise validate and
-    then be written into the harness's bash array."""
-
-    def test_name_validator_rejects_a_trailing_newline(self):
-        self.assertTrue(S._NAME_RE.match("good_name"))
-        self.assertIsNone(S._NAME_RE.match("bad\n"))
-        self.assertIsNone(S._NAME_RE.match("bad\nmore"))
-
-    def test_harness_params_reject_a_newline_bearing_theorem(self):
-        import json
-        d = tempfile.mkdtemp()
-        os.makedirs(os.path.join(d, "scripts"))
-        with open(os.path.join(d, "scripts", "harness.json"), "w") as fh:
-            json.dump({"project": "P", "problem": "x", "theorems": ["ok\n"]}, fh)
-        with self.assertRaises(RuntimeError):
-            S._read_harness_params(d)

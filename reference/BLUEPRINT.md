@@ -73,7 +73,7 @@ Layout (every project follows this shape; rename only the bracketed parts):
   TASKS.md             -- append-only delegation log (the Plan agent writes here; see §5)
   REVIEW.md            -- append-only audit log (the Review agent writes here; see §5)
   scripts/
-    verify.sh          -- the verification harness
+    verify.py          -- the verification harness
     frozen.sha256      -- SHA-256 pins of Defs.lean + Theorems.lean
     ALLOWED_AXIOMS.txt -- axiom allowlist init.py derives from USER_NOTES.md
 ```
@@ -115,7 +115,7 @@ writing them, `Theorems.lean` is frozen. Each statement must:
 - render a claim of `SKETCH.md` **faithfully and minimally** — no weakening, no
   added hypotheses, no specializing a universal to examples, no proving a special
   case and naming it the general one;
-- have a **stable, binding name** (these names are referenced by `verify.sh`,
+- have a **stable, binding name** (these names are referenced by `verify.py`,
   `Discharge.lean`, `Solution.lean`, and `init.py` — they cannot drift);
 - include the **headline existential / final claim**, plus any intermediate
   milestone statements and any "easy converse"/sanity lemmas that make the
@@ -209,7 +209,7 @@ share **no memory** beyond the files on disk — they coordinate entirely throug
    Each owns only the files its line assigns (this is what makes parallelism
    collision-free).
 3. **REVIEW** — one independent, adversarial auditor re-runs the build, `#print
-   axioms`, and `scripts/verify.sh`, checks faithfulness against `SKETCH.md`/
+   axioms`, and `scripts/verify.py`, checks faithfulness against `SKETCH.md`/
    `BLUEPRINT.md`, and **appends a `## Review — Iteration N` block to `REVIEW.md`**
    ending in `Verdict: COMPLETE | INCOMPLETE`. Every 5th iteration is a full-
    project audit. The loop ends when a verdict is `COMPLETE` and a final full
@@ -301,7 +301,7 @@ In `<Project>/Solution.lean`, restate each frozen theorem **verbatim** in
 `namespace <Project>.Solution` and set it `:= <name>_proof` (the sorry-free
 declaration from `Proofs/`). In `<Project>/Discharge.lean`, for each pair write
 `example : @<Frozen> = @<Proof> := rfl` — this compiles **iff** the proof has
-*exactly* the frozen proposition (machine-checked no-drift). `verify.sh` checks
+*exactly* the frozen proposition (machine-checked no-drift). `verify.py` checks
 both modules build and that `#print axioms <Project>.Solution.<name>` is clean for
 every frozen name.
 
@@ -389,7 +389,7 @@ specific traps below them.
   `ofReduceBool` — **plus** any assumed-certificate axioms the user permitted in
   `USER_NOTES.md` (their names are recorded in `scripts/ALLOWED_AXIOMS.txt`). Any
   axiom outside that allowlist is banned. This is checked per theorem by
-  `verify.sh` (checks 2 and 4).
+  `verify.py` (checks 2 and 4).
 
 - **Assumed certificates go in as `axiom`s, never as hypotheses.** A fact that is
   routine but prohibitively expensive to prove in Lean (a large factorization, an

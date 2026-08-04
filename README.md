@@ -77,7 +77,7 @@ run `python3 /path/to/setup.py`, etc.
 **1. `setup.py` — scaffold.** Reads `SKETCH.md` and the bundled
 [`reference/`](reference/) project (used purely as a format template) and writes:
 `BLUEPRINT.md` (the Lean decomposition — file layout, frozen Defs & Theorems,
-stages), `scripts/verify.sh` (the anti-cheat harness) + `scripts/frozen.sha256`,
+stages), `scripts/verify.py` (the anti-cheat harness) + `scripts/frozen.sha256`,
 the append-only logs `PROGRESS.md` / `TASKS.md` / `REVIEW.md`, and
 `USER_NOTES.md`. No Lean is written yet.
 
@@ -99,7 +99,7 @@ exits non-zero so an unfaithful skeleton is never handed to `loop.py`.
    `## Iteration N` block to `TASKS.md`, one `Agent k:` line per active worker.
 2. **Workers** — up to 4 in parallel — each does its assigned formalization and
    appends a timestamped report to `PROGRESS.md`.
-3. **`verify.sh`** is run by the orchestrator — never by an agent — and its
+3. **`verify.py`** is run by the orchestrator — never by an agent — and its
    result is handed to Review as ground truth. Whether the certifying check runs
    is not left to an agent's discretion, and a worker cannot suppress or reword
    what it reports.
@@ -128,7 +128,7 @@ route: the architect agent reads it, and it is the only point at which the
 "mandatory axioms" check can be configured. Seeding it later (before `init.py`)
 still permits the axioms, but leaves that check off. Its main use: if a fact is mathematically routine but
 prohibitively expensive to *prove* in Lean (a large factorization, an explicit
-interpolant, a numeric certificate), permit it as a Lean `axiom` here. `verify.sh`
+interpolant, a numeric certificate), permit it as a Lean `axiom` here. `verify.py`
 then allows exactly those named axioms and bans all others. By default the pipeline
 permits none.
 
@@ -136,7 +136,7 @@ permits none.
 
 The agents run unattended, so the pipeline assumes an agent may take shortcuts and
 makes each shortcut fail the build rather than pass silently (enforced by the
-prompts + `verify.sh`):
+prompts + `verify.py`):
 
 - `Defs.lean` and `Theorems.lean` are **frozen** and **SHA-pinned**; never edited
   during proving; `sorry` is allowed **only** in `Theorems.lean`.
@@ -154,7 +154,7 @@ prompts + `verify.sh`):
   any axioms you explicitly permit in `USER_NOTES.md`).
 - `PROGRESS.md`, `TASKS.md`, `REVIEW.md` are append-only; Review independently
   re-verifies every `✅` rather than trusting the log.
-- **The harness and its configuration are pinned.** `scripts/verify.sh`,
+- **The harness and its configuration are pinned.** `scripts/verify.py`,
   `scripts/harness.json`, `scripts/frozen.sha256` and `scripts/ALLOWED_AXIOMS.txt`
   all live in the workspace the agents edit, so their SHA-256 hashes are recorded
   in `scripts/control_manifest.sha256` and re-checked before every harness run. A

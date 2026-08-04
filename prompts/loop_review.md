@@ -39,7 +39,7 @@ APPEND (append-only) to ./REVIEW.md EXACTLY this block:
 
 ## Review -- Iteration @@N@@@@FULL_TAG@@
 Auditor: review-iter@@N@@
-Checks run: <the verify.sh / lake build / #print axioms commands you actually ran and their results>
+Checks run: <the verify.py / lake build / #print axioms commands you actually ran and their results>
 Findings: <bullets: confirmed-good items, AND every cheat / regression / faked ✅ / faithfulness gap, each with file:line; AND a NET-PROGRESS verdict for the iteration — "net progress toward <goal>" or "SCAFFOLDING ONLY: circled crux `<name>` for N iterations">
 Required follow-ups: <concrete fixes the Plan agent must assign next iteration, or "none". When the iteration was scaffolding-only on a recurring wall, write "STALLED on `<crux>`: <the direct mathematical attempt needed, or the human decision required>" so the planner does not re-assign more indirection.>
 Verdict: COMPLETE | INCOMPLETE

@@ -23,8 +23,8 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Unit tests
         run: python -m unittest discover -s tests -v
-      - name: Harness syntax
-        run: bash -n reference/scripts/verify.sh
+      - name: Harness compiles
+        run: python -m compileall -q reference/scripts/verify.py
       - name: Scripts compile
         run: python -m compileall -q formlib.py setup.py init.py loop.py
 
@@ -37,7 +37,3 @@ jobs:
           python-version: "3.12"
       - run: pip install ruff
       - run: ruff check .
-      - name: Shellcheck the harness
-        run: |
-          sudo apt-get update && sudo apt-get install -y shellcheck
-          shellcheck -S warning reference/scripts/verify.sh || true

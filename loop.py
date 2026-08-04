@@ -26,7 +26,7 @@ Each iteration:
                     "Agent k:" task from TASKS.md, does the work, and APPENDS a
                     timestamped report to PROGRESS.md.
     3. REVIEW agent reads PROGRESS.md, audits the work against SKETCH.md /
-                    BLUEPRINT.md / TASKS.md by re-running the build & verify.sh,
+                    BLUEPRINT.md / TASKS.md by re-running the build & verify.py,
                     and APPENDS a "## Review -- Iteration N" block (with a
                     Verdict: COMPLETE | INCOMPLETE line) to REVIEW.md.
                     Every 5th iteration this is a FULL-PROJECT audit.
@@ -63,6 +63,7 @@ import argparse
 import os
 import signal
 import subprocess
+import sys
 
 import formlib as F
 
@@ -125,20 +126,20 @@ _MAX_FAIL_LINES = 40  # failure lines quoted to the Review agent before truncati
 
 
 def run_verify(target: str, dry_run: bool = False) -> tuple[int, str]:
-    """Run scripts/verify.sh and return (issues, combined output).
+    """Run scripts/verify.py and return (issues, combined output).
 
     The ORCHESTRATOR runs the harness, every iteration — never the Review agent.
     Whether the certifying check ran must not depend on an agent's discretion, and
-    a worker cannot suppress or reword what it reports. verify.sh exits with the
-    number of failing checks, so the exit code IS the issue count; -1 means the
-    harness itself could not be run, which is a failure, not a pass.
+    a worker cannot suppress or reword what it reports. The harness exits with the number of
+    failing checks, so the exit code IS the issue count; -1 means the harness
+    itself could not be run, which is a failure, not a pass.
     """
     # --dry-run inspects prompts; it does not inspect the target.
     if dry_run:
-        return 0, "[dry-run] verify.sh not executed"
-    path = os.path.join(target, "scripts", "verify.sh")
+        return 0, "[dry-run] verify.py not executed"
+    path = os.path.join(target, "scripts", "verify.py")
     if not os.path.isfile(path):
-        return -1, "scripts/verify.sh not found"
+        return -1, "scripts/verify.py not found"
 
     # The harness and its config live in the workspace the workers edit, so a
     # result is only meaningful if they are still the files that were pinned.
@@ -148,17 +149,17 @@ def run_verify(target: str, dry_run: bool = False) -> tuple[int, str]:
         return -1, "CONTROL FILES CHANGED SINCE THEY WERE PINNED:\n  " + \
                    "\n  ".join(tampered)
     try:
-        proc = subprocess.run([path], cwd=target, capture_output=True, text=True,
+        proc = subprocess.run([sys.executable, path], cwd=target, capture_output=True, text=True,
                               timeout=F.VERIFY_TIMEOUT)
     except subprocess.TimeoutExpired:
-        return -1, f"verify.sh timed out after {F.VERIFY_TIMEOUT}s"
+        return -1, f"verify.py timed out after {F.VERIFY_TIMEOUT}s"
     except OSError as exc:
-        return -1, f"verify.sh could not be run: {exc}"
+        return -1, f"verify.py could not be run: {exc}"
     out = (proc.stdout or "") + (proc.stderr or "")
     # 64 = pre-flight failure: the harness verified NOTHING. Reporting that as
     # "1 issue" would make it indistinguishable from one ordinary failing check.
     if proc.returncode >= 64:
-        return -1, f"verify.sh could not run (exit {proc.returncode}):\n{out}"
+        return -1, f"verify.py could not run (exit {proc.returncode}):\n{out}"
     return proc.returncode, out
 
 
@@ -224,7 +225,7 @@ def confirm_complete(target: str, n: int, model, log_dir, digest: str) -> bool:
                        log_dir=log_dir, verify_digest_text=digest)
     verdict = F.review_verdict(final, os.path.join(target, "REVIEW.md"), n)
     issues, _ = run_verify(target)
-    F.log(f"loop: final audit verdict: {verdict}; verify.sh: "
+    F.log(f"loop: final audit verdict: {verdict}; verify.py: "
           + ("PASS (0 issues)" if issues == 0
              else "could not run" if issues < 0 else f"{issues} issue(s)"))
 
@@ -238,7 +239,7 @@ def confirm_complete(target: str, n: int, model, log_dir, digest: str) -> bool:
               + (" (no verdict could be read from it)" if verdict is None else "")
               + " — see REVIEW.md.")
     if issues != 0:
-        F.log("loop: verify.sh does not pass, so this is not COMPLETE regardless "
+        F.log("loop: verify.py does not pass, so this is not COMPLETE regardless "
               "of the audit's verdict.")
     return False
 
@@ -329,7 +330,7 @@ def main() -> int:
                 # Distinguish them by the objective progress signal, so a finished
                 # run is reported COMPLETE instead of being mislabeled as stuck.
                 discharged = F.progress_signal(target)
-                n_frozen = len(F._solution_frozen_names(target))
+                n_frozen = len(F.frozen_theorem_names(target))
                 if n_frozen > 0 and discharged >= n_frozen:
                     # DONE: all frozen theorems are discharged in Solution.lean.
                     # Confirm with a full-project audit, then report COMPLETE.
@@ -338,7 +339,7 @@ def main() -> int:
                     issues, out = run_verify(target)
                     if confirm_complete(target, n, args.model, log_dir,
                                         verify_digest(issues, out)):
-                        F.log("FORMALIZATION COMPLETE — verify.sh passes with 0 issues.")
+                        F.log("FORMALIZATION COMPLETE — verify.py passes with 0 issues.")
                         return 0
                     F.log("loop: every frozen theorem is discharged but completion "
                           "could not be confirmed — stopping for inspection.")
@@ -372,13 +373,13 @@ def main() -> int:
         verify_issues, verify_out = run_verify(target, args.dry_run)
         digest = verify_digest(verify_issues, verify_out)
         if args.dry_run:
-            F.log(f"loop: verify.sh after iteration {n}: not run (--dry-run)")
+            F.log(f"loop: verify.py after iteration {n}: not run (--dry-run)")
         elif verify_issues == 0:
-            F.log(f"loop: verify.sh after iteration {n}: PASS (0 issues)")
+            F.log(f"loop: verify.py after iteration {n}: PASS (0 issues)")
         elif verify_issues < 0:
-            F.log(f"loop: verify.sh after iteration {n}: DID NOT RUN — {verify_out.strip()}")
+            F.log(f"loop: verify.py after iteration {n}: DID NOT RUN — {verify_out.strip()}")
         else:
-            F.log(f"loop: verify.sh after iteration {n}: {verify_issues} issue(s) "
+            F.log(f"loop: verify.py after iteration {n}: {verify_issues} issue(s) "
                   "(expected until every frozen theorem is discharged)")
 
         # 3. REVIEW (full-project audit every 5th iteration)
@@ -398,7 +399,7 @@ def main() -> int:
         # The harness outranks the verdict: COMPLETE is a claim about an objective
         # state the orchestrator just measured, so a mismatch is the agent's error.
         if verdict == "COMPLETE" and verify_issues != 0:
-            F.log(f"loop: Review claimed COMPLETE but verify.sh reports "
+            F.log(f"loop: Review claimed COMPLETE but verify.py reports "
                   f"{verify_issues if verify_issues > 0 else 'that it could not run'}"
                   " — OVERRIDING to INCOMPLETE and continuing.")
             verdict = "INCOMPLETE"
@@ -407,7 +408,7 @@ def main() -> int:
             F.log("loop: Review reports COMPLETE — running final full-project audit.")
             if confirm_complete(target, n, args.model, log_dir, digest):
                 F.log("==================================================")
-                F.log("FORMALIZATION COMPLETE — verify.sh passes with 0 issues.")
+                F.log("FORMALIZATION COMPLETE — verify.py passes with 0 issues.")
                 F.log("Final findings in REVIEW.md.")
                 F.log("==================================================")
                 return 0
@@ -422,7 +423,7 @@ def main() -> int:
         # the next step while nothing closes it.
         discharged = F.progress_signal(target)
         ledger = F.record_progress(target, n, signal)
-        n_frozen = len(F._solution_frozen_names(target))
+        n_frozen = len(F.frozen_theorem_names(target))
         F.log(f"loop: progress signal after iteration {n}: "
               f"{signal}/{n_frozen} frozen theorems discharged in Solution.lean")
 

@@ -27,34 +27,41 @@ If you change any parser, matcher, or check, add a test for the shape that would
 defeat it. **A parse that finds nothing must never be reported as "nothing to
 report".**
 
-## Before you touch `reference/scripts/verify.sh`
+## Before you touch `reference/scripts/verify.py`
 
 This file certifies every result the pipeline produces, so it has rules of its own:
 
-- It runs under `set -euo pipefail`. A no-match `grep` — in a command
-  substitution *or* a bare pipeline — aborts the script. Guard with `|| true`
-  where no match is a legitimate outcome. `setup.py`'s `_lint_verify_sh` checks
-  both shapes and runs on every scaffold.
-- A check that detects a violation must be able to *report* it. Wrap anything
-  whose non-zero exit means "found a problem" in `set +e` / `set -e`.
-- Pre-flight failures exit `64`, never `1`: the caller distinguishes "could not
-  run" from "ran and found one problem".
-- It must stay readable by an auditor. Density is acceptable for portability
-  (macOS ships bash 3.2 and BSD userland) and for failure handling; it is not
-  acceptable for cleverness.
-- `PROJECT=` and `ALL_THEOREMS=(…)` must stay plain literals on their own lines —
-  `formlib` parses them back out of the *generated* file to derive the project
-  namespace and the frozen-theorem set.
+- **A check that cannot look must FAIL, not pass.** If a parse comes back empty,
+  that is "I could not check", never "nothing is wrong". Most historical bugs
+  here were an empty parse read as success — an axiom list that wrapped across
+  lines, a pins file with no pins, a scan blinded by a string literal.
+- **A check must be able to report what it found.** Return findings; do not
+  raise. The one place that exits early is a *pre-flight* failure, which means
+  nothing was verified at all.
+- **Pre-flight failures exit `64`, never `1`**, so the caller can distinguish
+  "could not run" from "ran and found one problem". `loop.py` maps anything
+  `>= 64` to "did not run" and refuses to accept a `COMPLETE` verdict on it.
+- **It is static.** Everything problem-specific lives in `scripts/harness.json`,
+  which the harness reads at run time, so the file is byte-identical in every
+  project. Do not add substitution or per-project branching.
+- **Prefer plain Python to clever parsing.** This used to be 470 lines of bash;
+  most of its bugs were shell semantics (`set -e` aborts, word splitting, BSD vs
+  GNU) or `grep`/`sed` pipelines. Where a regex is genuinely the right tool
+  (Lean's `#print axioms` output), give it a name, a comment, and a test.
+
+Each check is a plain function taking `(harness, say)` and returning a list of
+failure strings, so it can be tested directly — see `tests/test_harness.py`. Add
+a test with any new check.
 
 ## Determinism
 
-`verify.sh` and the append-only log headers are **rendered** from `reference/` by
-`setup.py`; only the values in `scripts/harness.json` vary per problem. They are
-deliberately not model-authored, because the harness is what certifies the result.
-`BLUEPRINT.md`, `Defs.lean` and `Theorems.lean` *are* model-authored — that is the
-formalization, and it is the point of the project.
+`scripts/verify.py` is **copied** verbatim from `reference/`, and the append-only
+log headers are rendered from it with only the problem title filled in. They are
+deliberately not model-authored, because the harness is what certifies the
+result. `BLUEPRINT.md`, `Defs.lean` and `Theorems.lean` *are* model-authored —
+that is the formalization, and it is the point of the project.
 
-If you change the harness, change it in `reference/scripts/verify.sh`. Editing a
+If you change the harness, change it in `reference/scripts/verify.py`. Editing a
 generated project's copy will be flagged by the control-file manifest.
 
 ## Style

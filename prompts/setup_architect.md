@@ -27,7 +27,7 @@ setup.py from the reference and are identical in every run.
 
 2. Read the reference BLUEPRINT as your FORMAT TEMPLATE:
      @@REF@@/BLUEPRINT.md
-   You do not need to read the reference verify.sh or log headers — you are not
+   You do not need to read the reference verify.py or log headers — you are not
    writing those.
 
 3. Write ./BLUEPRINT.md with the SAME section structure as the reference:
@@ -41,14 +41,14 @@ setup.py from the reference and are identical in every run.
          Defs.lean (FROZEN), Theorems.lean (FROZEN, every proof `:= sorry`),
          Proofs/<Stage*>/ subdirectories, Discharge.lean, Solution.lean, the
          root <Project>.lean import file, SKETCH.md/BLUEPRINT.md/PROGRESS.md,
-         and scripts/verify.sh + scripts/frozen.sha256;
+         and scripts/verify.py + scripts/frozen.sha256;
        * "Freeze the Definitions (Defs.lean)" — every def the proof needs, each
          with an explicit, recorded MODELING DECISION (so no later agent
          re-derives or silently changes it);
        * "Freeze the Theorems (Theorems.lean)" — the COMPLETE list of frozen
          theorem statements as `:= sorry`, each faithfully + minimally rendering
          a claim of the sketch, plus the headline existential. Give every frozen
-         theorem a stable name; these names are BINDING (verify.sh and init.py
+         theorem a stable name; these names are BINDING (verify.py and init.py
          depend on them).
        * the re-build gate ("after freezing, `lake build` must succeed; record
          SHA-256 pins") ;
@@ -88,7 +88,7 @@ setup.py from the reference and are identical in every run.
    stages of BLUEPRINT.md prove them, and must match those names byte for byte.
    Plain identifiers only — no namespace prefix, no `)` or `"` characters.
 
-   Do NOT write ./scripts/verify.sh. setup.py renders the verification harness
+   Do NOT write ./scripts/verify.py. setup.py renders the verification harness
    itself from the reference, substituting only the values above. Its seven checks
      (1)  frozen SHA pins for Defs.lean + Theorems.lean, and that both are pinned;
      (2)  banned keywords (sorry / sorryAx / native_decide / admit / unsafe /
@@ -117,10 +117,10 @@ setup.py from the reference and are identical in every run.
   finitely many examples, no replacing an equality with a one-sided inclusion,
   no swapping genuine finite-generation / textbook definitions for convenient
   surrogates, no proving a special case and claiming the general one.
-- Banned tactics/keywords as in verify.sh check (2). `#print axioms` of every
+- Banned tactics/keywords as in verify.py check (2). `#print axioms` of every
   solved theorem must stay within {propext, Classical.choice, Quot.sound} — PLUS
   any assumed-certificate axioms the user permits in USER_NOTES.md (init.py
-  records their names in scripts/ALLOWED_AXIOMS.txt; verify.sh enforces the
+  records their names in scripts/ALLOWED_AXIOMS.txt; verify.py enforces the
   allowlist). Certificates may be assumed ONLY as `axiom`s, NEVER as a hypothesis
   on a frozen theorem. Do NOT edit or overwrite USER_NOTES.md; the user owns it.
 - PROGRESS.md is append-only; never fake a ✅ (only mark proved what compiles

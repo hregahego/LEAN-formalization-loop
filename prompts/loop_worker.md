@@ -24,7 +24,7 @@ THEN DO THE WORK:
   Do NOT introduce any new `axiom`. Keep `#print axioms` of anything you prove
   within {propext, Classical.choice, Quot.sound} PLUS any axiom names listed in
   ./scripts/ALLOWED_AXIOMS.txt (the user-permitted certificates); any OTHER axiom
-  is forbidden and will fail verify.sh.
+  is forbidden and will fail verify.py.
 - Work ONLY on the file(s) your task assigns, to avoid colliding with the other
   workers running in parallel right now.
 - Use the Lean tooling: edit, `lake build` your target module, read the goal /

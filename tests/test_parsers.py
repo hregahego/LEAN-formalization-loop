@@ -59,32 +59,38 @@ class AgentAndVerdictTolerance(unittest.TestCase):
 
 
 class FrozenTheoremNames(unittest.TestCase):
-    """ALL_THEOREMS is parsed back out of the generated verify.sh. A `)` inside a
-    stage comment once truncated the list to 8 of 24 names silently, which capped
-    the progress signal and read as a stall."""
+    """The frozen names come from scripts/harness.json.
 
-    def _names(self, body):
+    They used to be recovered by regex from the generated shell harness, where a
+    `)` in one of the architect's stage comments truncated the list to 8 of 24
+    names silently — capping the progress signal so a working run read as a
+    stall. Reading the JSON removes the parse entirely.
+    """
+
+    def _project(self, payload):
         d = tempfile.mkdtemp()
         os.makedirs(os.path.join(d, "scripts"))
-        with open(os.path.join(d, "scripts", "verify.sh"), "w") as fh:
-            fh.write(body)
-        return F._solution_frozen_names(d)
+        with open(os.path.join(d, "scripts", "harness.json"), "w") as fh:
+            fh.write(payload)
+        return d
 
-    def test_single_line_array(self):
-        self.assertEqual(
-            self._names('PROJECT="P"\nALL_THEOREMS=("a" "b" "c")\n'), ["a", "b", "c"])
+    def test_reads_names_in_order(self):
+        d = self._project('{"project": "P", "theorems": ["a", "b", "c"]}')
+        self.assertEqual(F.frozen_theorem_names(d), ["a", "b", "c"])
+        self.assertEqual(F.project_name(d), "P")
 
-    def test_comment_containing_a_paren_does_not_truncate(self):
-        body = ('PROJECT="P"\nALL_THEOREMS=(\n'
-                '  # Stage C: the map p lies in Int(D)\n  "a"\n  "b"\n)\n')
-        self.assertEqual(self._names(body), ["a", "b"])
+    def test_punctuation_in_other_fields_cannot_truncate_the_list(self):
+        d = self._project('{"project": "P", "problem": "lies in Int(D) )))",'
+                          ' "theorems": ["a", "b"]}')
+        self.assertEqual(F.frozen_theorem_names(d), ["a", "b"])
 
-    def test_quoted_word_in_a_comment_is_not_a_theorem(self):
-        body = 'PROJECT="P"\nALL_THEOREMS=(\n  "a"  # the "main" one\n  "b"\n)\n'
-        self.assertEqual(self._names(body), ["a", "b"])
+    def test_missing_file_yields_empty_not_a_guess(self):
+        self.assertEqual(F.frozen_theorem_names(tempfile.mkdtemp()), [])
 
-    def test_missing_array_yields_empty_not_a_guess(self):
-        self.assertEqual(self._names('PROJECT="P"\n'), [])
+    def test_malformed_json_yields_empty_not_a_crash(self):
+        d = self._project("{not json")
+        self.assertEqual(F.frozen_theorem_names(d), [])
+        self.assertIsNone(F.project_name(d))
 
 
 class RecurringCruxBlindness(unittest.TestCase):

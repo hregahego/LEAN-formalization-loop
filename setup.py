@@ -22,7 +22,7 @@ What it does:
 
     setup.py itself then renders, from the reference:
 
-        scripts/verify.sh     (the 7-check verification harness)
+        scripts/verify.py     (the 7-check verification harness)
         PROGRESS.md           (append-only log header)
         TASKS.md              (append-only header; 4-agent delegation)
         REVIEW.md             (append-only header; audit log)
@@ -52,7 +52,7 @@ import argparse
 import json
 import os
 import re
-import subprocess
+import shutil
 import sys
 
 import formlib as F
@@ -74,7 +74,7 @@ def _read_harness_params(
     mandatory axioms) from scripts/harness.json.
 
     Validated strictly: project/theorems are substituted into shell source, and
-    formlib re-parses them back out of verify.sh, so a stray quote or paren would
+    formlib re-parses them back out of verify.py, so a stray quote or paren would
     corrupt both the harness and the progress signal.
     """
     path = os.path.join(target, "scripts", "harness.json")
@@ -142,132 +142,22 @@ def _render_boilerplate(target: str, problem: str) -> list[str]:
     return written
 
 
-def _render_verify_sh(target: str, project: str, theorems: list[str],
-                      final_theorem: str, mandatory: list[str]) -> str:
-    """Write scripts/verify.sh from the reference harness.
+def install_harness(target: str) -> str:
+    """Copy the verification harness into the project.
 
-    Only the harness.json values vary per problem; the checks are fixed
-    logic and are never re-authored per run. Keeping both as plain literals is
-    also required by formlib._project_name / _solution_frozen_names, which read
-    them back out of the generated file.
+    It is a STATIC file — identical in every project — because everything
+    problem-specific lives in scripts/harness.json, which the harness reads at
+    run time. Nothing is substituted, so there is nothing to get wrong, and the
+    control manifest pins the copy.
     """
-    src = F.read_text(os.path.join(F.REFERENCE_DIR, "scripts", "verify.sh"))
-    if not src:
-        raise RuntimeError("reference scripts/verify.sh is missing or empty")
-
-    names = " ".join('"%s"' % t for t in theorems)
-    src, n_proj = re.subn(r'(?m)^PROJECT=.*$', 'PROJECT="%s"' % project, src, count=1)
-    src, n_thms = re.subn(r'(?m)^ALL_THEOREMS=\(.*\)$', "ALL_THEOREMS=(%s)" % names,
-                          src, count=1)
-    if not n_proj or not n_thms:
-        raise RuntimeError("reference verify.sh lost its PROJECT / ALL_THEOREMS "
-                           "parameter block — cannot render the harness")
-
-    axioms = " ".join('"%s"' % a for a in mandatory)
-    src, n_fin = re.subn(r'(?m)^FINAL_THEOREM=.*$',
-                         'FINAL_THEOREM="%s"' % final_theorem, src, count=1)
-    src, n_max = re.subn(r'(?m)^MANDATORY_AXIOMS=\(.*\)$',
-                         "MANDATORY_AXIOMS=(%s)" % axioms, src, count=1)
-    if not n_fin or not n_max:
-        raise RuntimeError("reference verify.sh lost its FINAL_THEOREM / "
-                           "MANDATORY_AXIOMS parameter block")
-
-    path = os.path.join(target, "scripts", "verify.sh")
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as fh:
-        fh.write(src)
-    os.chmod(path, 0o755)
-    return path
-
-
-def _lint_verify_sh(path: str) -> list[str]:
-    """Reject a harness that would silently skip checks instead of failing loudly.
-
-    Guards the two things that make a broken harness look like a passing one, plus
-    the literals formlib parses back out. Kept even though the file is now rendered
-    rather than model-authored: it also covers hand edits and future template work.
-    """
-    problems: list[str] = []
-    proc = subprocess.run(["bash", "-n", path], capture_output=True, text=True)
-    if proc.returncode != 0:
-        problems.append("verify.sh: bash syntax error: %s" % proc.stderr.strip())
-
-    text = F.read_text(path)
-    # Join backslash-continuations first, so a guard on the following physical
-    # line still counts as guarding the statement that opened it.
-    statements, buf, start = [], "", 1
-    for i, line in enumerate(text.splitlines(), 1):
-        if not buf:
-            start = i
-        buf += line.rstrip("\\") if line.rstrip().endswith("\\") else line
-        if not line.rstrip().endswith("\\"):
-            statements.append((start, buf))
-            buf = ""
-    if buf:
-        statements.append((start, buf))
-
-    # Track whether `set -e` is in force, so we can tell a deliberately unguarded
-    # substitution (wrapped in set +e, as checks 3-5 do) from an accidental one.
-    errexit = False
-    heredoc = None
-    for i, stmt in statements:
-        stripped = stmt.strip()
-
-        # Skip heredoc bodies — they are another language (the Check 2 scanner is
-        # Python) and must not be read as shell.
-        if heredoc is not None:
-            if stripped == heredoc:
-                heredoc = None
-            continue
-        hd = re.search(r"<<-?'?([A-Za-z_]\w*)'?", stripped)
-        if hd:
-            heredoc = hd.group(1)
-
-        if re.match(r"^set\s+-\w*e", stripped):
-            errexit = True
-        elif re.match(r"^set\s+\+\w*e", stripped):
-            errexit = False
-        if not errexit:
-            continue
-
-        guarded = "|| true" in stripped
-
-        # Under `set -e` + `pipefail`, a no-match grep aborts the whole run. This
-        # bites in TWO shapes, and checking only the first missed three live cases:
-        #   VAR=$(... grep ...)          — command substitution
-        #   echo "$x" | grep ... | head  — a bare pipeline, typically on a FAILURE
-        #                                  path printing diagnostics, so the harness
-        #                                  dies exactly when it has something to say.
-        if not guarded and re.search(r"\bgrep\b", stripped) \
-                and not stripped.startswith("#"):
-            if re.match(r"^\w+=\$\(", stripped):
-                problems.append("verify.sh:%d: unguarded grep in command "
-                                "substitution (aborts under set -e on no match)" % i)
-            elif "|" in stripped and not re.match(r"^(if|while|until|case)\b", stripped):
-                problems.append("verify.sh:%d: unguarded grep pipeline (aborts "
-                                "under set -e + pipefail on no match)" % i)
-
-        # Capturing `$?` only makes sense if the command was allowed to fail.
-        # Under `set -e` it never gets the chance — the harness dies first, so the
-        # check can only ever report success. This is how a check becomes pass-only.
-        if re.match(r"^\w+=\$\?", stripped):
-            problems.append("verify.sh:%d: captures $? while set -e is in force — "
-                            "the failure path can never report "
-                            "(wrap the command in set +e / set -e)" % i)
-
-    if not re.search(r'(?m)^\s*PROJECT\s*=\s*"', text):
-        problems.append("verify.sh: no PROJECT=\"...\" line "
-                        "(formlib._project_name parses it)")
-    # `[^)]*` would stop at the first `)` — the same shape that once truncated
-    # the theorem list when a stage comment contained one. Match the assignment
-    # and a quoted name without spanning parens.
-    if not re.search(r'(?m)^ALL_THEOREMS=\(\s*"', text):
-        problems.append("verify.sh: no ALL_THEOREMS=(\"...\") array "
-                        "(formlib._solution_frozen_names parses it)")
-    for check in ("Check 4", "Check 5"):
-        if check not in text:
-            problems.append("verify.sh: %s is missing" % check)
-    return problems
+    src = os.path.join(F.REFERENCE_DIR, "scripts", "verify.py")
+    if not os.path.isfile(src):
+        raise RuntimeError("reference scripts/verify.py is missing")
+    dest = os.path.join(target, "scripts", "verify.py")
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    shutil.copyfile(src, dest)
+    os.chmod(dest, 0o755)
+    return dest
 
 
 def main() -> int:
@@ -328,30 +218,25 @@ def main() -> int:
     # Render the harness and the append-only headers ourselves — never the model.
     try:
         project, problem, theorems, final_thm, mandatory = _read_harness_params(target)
-        verify_path = _render_verify_sh(target, project, theorems, final_thm, mandatory)
+        install_harness(target)
         boilerplate = _render_boilerplate(target, problem)
     except RuntimeError as exc:
         F.log(f"ERROR: {exc}")
         return 1
-    F.log(f"setup: rendered scripts/verify.sh (PROJECT={project}, "
-          f"{len(theorems)} frozen theorems)")
+    F.log(f"setup: installed scripts/verify.py (project={project}, "
+          f"{len(theorems)} frozen theorems"
+          + (f", {len(mandatory)} mandatory axioms" if mandatory else "") + ")")
     F.log(f"setup: rendered {', '.join(boilerplate)} from the reference")
 
     # Pin the control files now. init.py re-pins once it has written
     # frozen.sha256 and ALLOWED_AXIOMS.txt; loop.py re-checks every iteration.
-    problems = _lint_verify_sh(verify_path)
-    if problems:
-        for p in problems:
-            F.log(f"ERROR: {p}")
-        return 1
-
     # Pinned only after the harness passes its lint — a manifest vouching for a
     # file we just rejected would be worse than no manifest.
     pinned = F.write_control_manifest(target)
     F.log(f"setup: pinned control files ({', '.join(pinned)})")
 
     F.log("setup complete. Scaffolding written:")
-    for f in expected + ["scripts/verify.sh"] + list(_BOILERPLATE):
+    for f in expected + ["scripts/verify.py"] + list(_BOILERPLATE):
         F.log(f"  ✓ {f}")
     F.log("Next: python3 init.py " + target)
     # The scaffold is complete even if the agent exited untidily; its status

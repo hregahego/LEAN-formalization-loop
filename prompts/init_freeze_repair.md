@@ -18,7 +18,7 @@ hypothesis to bolt on".
    `declaration uses 'sorry'` warnings — no errors, no other warnings.
 5. Re-record the SHA-256 of Defs.lean and Theorems.lean into
    scripts/frozen.sha256 (the frozen statements changed, so the pins MUST be
-   updated), in the exact format scripts/verify.sh expects.
+   updated), in the exact format scripts/verify.py expects.
 6. Append a PROGRESS.md `📝 decision` entry (append-only, real UTC timestamp from
    `date -u +"%Y-%m-%dT%H:%M:%SZ"`) describing EXACTLY what you changed and why,
    referencing the audit.
