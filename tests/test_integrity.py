@@ -132,3 +132,48 @@ class VerifyDigest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CanonicalHarnessJson(unittest.TestCase):
+    """scripts/harness.json is hashed into the control manifest, so its bytes
+    must be a function of its values. Agents format JSON inconsistently — the
+    existing runs vary in indentation and key order — which would otherwise make
+    two identically-configured projects pin different hashes."""
+
+    def _canonical(self, payload):
+        import setup as S
+        d = tempfile.mkdtemp()
+        os.makedirs(os.path.join(d, "scripts"))
+        _write(os.path.join(d, "scripts", "harness.json"), payload)
+        project, problem, theorems, final, mandatory = S._read_harness_params(d)
+        S.write_harness_json(d, project, problem, theorems, final, mandatory)
+        with open(os.path.join(d, "scripts", "harness.json"), encoding="utf-8") as fh:
+            return fh.read()
+
+    def test_formatting_of_the_source_does_not_affect_the_result(self):
+        compact = self._canonical('{"project":"P","problem":"t","theorems":["a","b"]}')
+        sprawling = self._canonical(
+            '{\n "theorems" : [ "a" , "b" ],\n  "problem":"t",\n "project" : "P"\n}\n')
+        self.assertEqual(compact, sprawling)
+
+    def test_unknown_keys_are_dropped(self):
+        out = self._canonical('{"project":"P","problem":"t","theorems":["a"],'
+                              '"_comment":"from the template"}')
+        self.assertNotIn("_comment", out)
+
+    def test_the_optional_check_4b_pair_is_omitted_when_unused(self):
+        out = json.loads(self._canonical(
+            '{"project":"P","problem":"t","theorems":["a"]}'))
+        self.assertNotIn("final_theorem", out)
+        self.assertNotIn("mandatory_axioms", out)
+
+    def test_the_optional_pair_survives_when_set(self):
+        out = json.loads(self._canonical(json.dumps(
+            {"project": "P", "problem": "t", "theorems": ["a"],
+             "final_theorem": "a", "mandatory_axioms": ["P.cert"]})))
+        self.assertEqual(out["final_theorem"], "a")
+        self.assertEqual(out["mandatory_axioms"], ["P.cert"])
+
+    def test_ends_with_a_trailing_newline(self):
+        self.assertTrue(self._canonical(
+            '{"project":"P","problem":"t","theorems":["a"]}').endswith("\n"))

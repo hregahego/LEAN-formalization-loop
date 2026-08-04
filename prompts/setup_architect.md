@@ -71,7 +71,8 @@ setup.py from the reference and are identical in every run.
    three append-only log headers from the reference itself — their wording is
    fixed pipeline policy, identical in every run, and not yours to restate.
 
-5. Write ./scripts/harness.json — the ONLY harness artifact you produce. Exactly:
+5. Write ./scripts/harness.json — the ONLY harness artifact you produce.
+   See @@REF@@/scripts/harness.json for the annotated template. Exactly:
 
    ```json
    {"project": "<source-dir / root namespace name>",
@@ -109,9 +110,6 @@ setup.py from the reference and are identical in every run.
    are FIXED LOGIC, identical across every problem. They are not yours to adapt,
    weaken, re-derive, or reason about. The harness is what certifies the final
    result, so it is never model-authored.
-
-6. Write ./scripts/frozen.sha256 — a single placeholder comment line, e.g.
-   "# pins recorded by init.py after Defs.lean/Theorems.lean are frozen".
 
 == Cheat-prevention you MUST bake into BLUEPRINT.md (adapt to the problem) ==
 - Defs.lean + Theorems.lean are FROZEN and byte-pinned by SHA; never edited

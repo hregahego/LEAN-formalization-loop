@@ -18,11 +18,16 @@ What it does:
         BLUEPRINT.md          (Part -1 SETUP / file layout / frozen Defs &
                                Theorems / stages with cheat-watches / order)
         scripts/harness.json  (project namespace, problem title, theorem names)
+
+    setup.py itself then writes, from the reference:
+
+        scripts/verify.py     (the 7-check harness, copied verbatim — it is
+                               byte-identical in every project and reads
+                               scripts/harness.json at run time)
+        scripts/harness.json  (rewritten in canonical form from the validated
+                               values, so its bytes — which are hashed into the
+                               control manifest — depend only on the values)
         scripts/frozen.sha256 (placeholder; init.py records the real pins)
-
-    setup.py itself then renders, from the reference:
-
-        scripts/verify.py     (the 7-check verification harness)
         PROGRESS.md           (append-only log header)
         TASKS.md              (append-only header; 4-agent delegation)
         REVIEW.md             (append-only header; audit log)
@@ -123,6 +128,29 @@ def _read_harness_params(
     return project, problem, theorems, final_theorem, mandatory
 
 
+def write_harness_json(target: str, project: str, problem: str,
+                       theorems: list[str], final_theorem: str,
+                       mandatory: list[str]) -> None:
+    """Rewrite scripts/harness.json in canonical form.
+
+    The architect supplies the VALUES; this decides the bytes. Agents format JSON
+    however they like — the existing runs vary in indentation and key order — and
+    this file is hashed into the control manifest, so without a canonical rewrite
+    two projects with identical configuration would pin different hashes. Keys
+    outside the schema (a stray "_comment", say) are dropped.
+    """
+    config = {"project": project, "problem": problem, "theorems": list(theorems)}
+    # Omit the optional pair entirely when unused, so its absence is unambiguous
+    # rather than an empty value that looks like a half-finished edit.
+    if mandatory:
+        config["final_theorem"] = final_theorem
+        config["mandatory_axioms"] = list(mandatory)
+    path = os.path.join(target, "scripts", "harness.json")
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(config, fh, indent=2)
+        fh.write("\n")
+
+
 # Append-only scaffolding whose wording is fixed pipeline policy, not per-problem
 # content. Copied from the reference with only the problem title filled in, so the
 # rules every later agent reads are identical in every run.
@@ -157,6 +185,13 @@ def install_harness(target: str) -> str:
     os.makedirs(os.path.dirname(dest), exist_ok=True)
     shutil.copyfile(src, dest)
     os.chmod(dest, 0o755)
+
+    # The pins placeholder is fixed text that init.py overwrites with real
+    # hashes. Copying it is one less artifact for an agent to get wrong.
+    pins = os.path.join(target, "scripts", "frozen.sha256")
+    if not os.path.exists(pins):
+        shutil.copyfile(os.path.join(F.REFERENCE_DIR, "scripts", "frozen.sha256"),
+                        pins)
     return dest
 
 
@@ -209,7 +244,7 @@ def main() -> int:
 
     # Verify the expected agent artifacts landed. The architect now writes only
     # the problem-specific content; everything else is rendered below.
-    expected = ["BLUEPRINT.md", "scripts/harness.json", "scripts/frozen.sha256"]
+    expected = ["BLUEPRINT.md", "scripts/harness.json"]
     missing = [f for f in expected if not os.path.exists(os.path.join(target, f))]
     if missing:
         F.log(f"WARNING: setup agent did not create: {', '.join(missing)}")
@@ -219,6 +254,7 @@ def main() -> int:
     try:
         project, problem, theorems, final_thm, mandatory = _read_harness_params(target)
         install_harness(target)
+        write_harness_json(target, project, problem, theorems, final_thm, mandatory)
         boilerplate = _render_boilerplate(target, problem)
     except RuntimeError as exc:
         F.log(f"ERROR: {exc}")
@@ -236,7 +272,7 @@ def main() -> int:
     F.log(f"setup: pinned control files ({', '.join(pinned)})")
 
     F.log("setup complete. Scaffolding written:")
-    for f in expected + ["scripts/verify.py"] + list(_BOILERPLATE):
+    for f in expected + ["scripts/verify.py", "scripts/frozen.sha256"] + list(_BOILERPLATE):
         F.log(f"  ✓ {f}")
     F.log("Next: python3 init.py " + target)
     # The scaffold is complete even if the agent exited untidily; its status

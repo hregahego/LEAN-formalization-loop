@@ -1,0 +1,29 @@
+{
+  "_comment": [
+    "TEMPLATE. The architect agent writes this file for a real problem; setup.py",
+    "then validates it and rewrites it in canonical form, so the bytes on disk are",
+    "a function of the values alone. Keys not listed below are dropped.",
+    "",
+    "This is the ONLY per-problem input the verification harness needs:",
+    "scripts/verify.py is byte-identical in every project and reads its",
+    "configuration from here at run time.",
+    "",
+    "  project           source directory and root namespace, e.g. \"Erdos477\".",
+    "  problem           one-line human-readable title; names the generated logs.",
+    "  theorems          every frozen theorem name, in the order the BLUEPRINT",
+    "                    stages prove them. These are binding: Theorems.lean,",
+    "                    Solution.lean and the harness all use them.",
+    "  final_theorem     OPTIONAL. The headline theorem, required only to enable",
+    "                    the check below.",
+    "  mandatory_axioms  OPTIONAL. Fully-qualified axioms that final_theorem must",
+    "                    GENUINELY DEPEND ON. The allowlist check only rejects",
+    "                    EXTRA axioms, so without this a proof that quietly took a",
+    "                    route avoiding a permitted certificate would pass. Set",
+    "                    both only when USER_NOTES.md mandates a proof route."
+  ],
+  "project": "<Project>",
+  "problem": "<one-line problem title>",
+  "theorems": ["<frozen name 1>", "<frozen name 2>"],
+  "final_theorem": "",
+  "mandatory_axioms": []
+}
