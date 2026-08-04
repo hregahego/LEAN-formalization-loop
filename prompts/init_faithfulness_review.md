@@ -51,6 +51,7 @@ over-broad assumed axiom).
 
 APPEND (append-only) to ./REVIEW.md exactly this block:
 
+```
 ## Review -- INIT faithfulness audit (Defs + Theorems)
 Auditor: init-faithfulness
 Files audited: <Defs.lean / Theorems.lean paths>
@@ -59,6 +60,7 @@ Per-item verdicts:
   - <each theorem name>:    FAITHFUL | UNFAITHFUL -- <reason, file:line>
 Findings: <the specific defects, each with file:line and the EXACT fix needed, or "none">
 Verdict: FAITHFUL | UNFAITHFUL
+```
 
 Set "Verdict: FAITHFUL" ONLY IF every definition and every theorem statement is a
 faithful, minimal, non-weakened rendering of SKETCH.md that matches BLUEPRINT's
@@ -68,8 +70,10 @@ UNFAITHFUL.
 Do NOT edit any file except appending to REVIEW.md. Print a one-paragraph
 summary, then end your message with this trailer as the VERY LAST lines:
 
+```
 <<<ORCH
 {"stage": "init-faithfulness", "verdict": "FAITHFUL"}
 ORCH>>>
+```
 
 (use "UNFAITHFUL" when any item failed; emit the trailer exactly once).

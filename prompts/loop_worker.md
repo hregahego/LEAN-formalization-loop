@@ -40,12 +40,14 @@ Write these lines flush left, exactly as shown. (The orchestrator's parsers do
 tolerate indentation and markdown decoration, but the plain form is what every
 other entry in the log uses.)
 
+```
 ## <UTC timestamp> -- <stage/item you worked on>
 Agent: agent-iter@@N@@-@@K@@
 Status: ✅ proved | ⚠️ blocked | 🔧 in progress | 📝 decision
 Check: <#print axioms result, or lake build result, or n/a>
 Note: <what you did, key lemma used, or the EXACT failing goal/error that blocks you>
 Next: <what this unblocks / what a follow-up agent should do, with exact lemma & file names>
+```
 
 Only mark `✅` what ACTUALLY compiles with a clean `#print axioms` -- never fake a
 ✅. Finally, print a one-paragraph report of what you accomplished or what blocked

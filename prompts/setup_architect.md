@@ -72,11 +72,15 @@ setup.py from the reference and are identical in every run.
    fixed pipeline policy, identical in every run, and not yours to restate.
 
 5. Write ./scripts/harness.json — the ONLY harness artifact you produce. Exactly:
-     {"project": "<source-dir / root namespace name>",
-      "problem": "<short human-readable problem title, one line>",
-      "theorems": ["<frozen name 1>", "<frozen name 2>", ...],
-      "final_theorem": "<headline theorem name, or omit>",
-      "mandatory_axioms": ["<Project>.<axiom>", ...]}
+
+   ```json
+   {"project": "<source-dir / root namespace name>",
+    "problem": "<short human-readable problem title, one line>",
+    "theorems": ["<frozen name 1>", "<frozen name 2>", ...],
+    "final_theorem": "<headline theorem name, or omit>",
+    "mandatory_axioms": ["<Project>.<axiom>", ...]}
+   ```
+
    Include `final_theorem` + `mandatory_axioms` ONLY when USER_NOTES.md requires
    an assumed certificate to actually be USED (e.g. it forbids an alternative
    route that would not need it). Check 4 alone rejects only EXTRA axioms, so a

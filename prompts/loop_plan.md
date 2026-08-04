@@ -62,6 +62,7 @@ stop; only "the next step is a LATERAL reduction of an already-reduced crux" is.
 APPEND (never edit or delete prior content) to ./TASKS.md EXACTLY this block,
 using this exact format so the orchestrator can parse it:
 
+```
 ## Iteration @@N@@
 <one or two lines: the goal of this iteration and which BLUEPRINT stage(s) it advances>
 
@@ -69,6 +70,7 @@ Agent 1: <files this agent OWNS (exact paths under Proofs/) + the lemma/theorem 
 Agent 2: <...>
 Agent 3: <...>
 Agent 4: <...>
+```
 
 Rules:
 - Include an "Agent k:" line ONLY for workers active this iteration. Number them
@@ -84,9 +86,11 @@ Finally, end your reply with a machine-readable trailer as the VERY LAST lines o
 your message — emit it exactly once, listing precisely the agent numbers you
 activated this iteration:
 
+```
 <<<ORCH
 {"iteration": @@N@@, "active_agents": [<the agent numbers you assigned, e.g. 1, 2>]}
 ORCH>>>
+```
 
 The list MUST match the "Agent k:" lines you appended (empty list `[]` if you
 assigned no workers).

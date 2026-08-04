@@ -37,12 +37,14 @@ result above does not already settle. Specifically check:
 @@FULL_BLOCK@@
 APPEND (append-only) to ./REVIEW.md EXACTLY this block:
 
+```
 ## Review -- Iteration @@N@@@@FULL_TAG@@
 Auditor: review-iter@@N@@
 Checks run: <the verify.py / lake build / #print axioms commands you actually ran and their results>
 Findings: <bullets: confirmed-good items, AND every cheat / regression / faked ✅ / faithfulness gap, each with file:line; AND a NET-PROGRESS verdict for the iteration — "net progress toward <goal>" or "SCAFFOLDING ONLY: circled crux `<name>` for N iterations">
 Required follow-ups: <concrete fixes the Plan agent must assign next iteration, or "none". When the iteration was scaffolding-only on a recurring wall, write "STALLED on `<crux>`: <the direct mathematical attempt needed, or the human decision required>" so the planner does not re-assign more indirection.>
 Verdict: COMPLETE | INCOMPLETE
+```
 
 Set "Verdict: COMPLETE" ONLY IF ALL of these hold: every frozen theorem is proved
 sorry-free; the harness result quoted above reports 0 issues; and the
@@ -58,9 +60,11 @@ Finally, end your reply with a machine-readable trailer as the VERY LAST lines o
 your message — emit it exactly once, and its verdict MUST equal the "Verdict:"
 line you appended to REVIEW.md:
 
+```
 <<<ORCH
 {"iteration": @@N@@, "verdict": "COMPLETE"}
 ORCH>>>
+```
 
 (use "INCOMPLETE" instead of "COMPLETE" when not done). Before the trailer, print
 a one-paragraph summary of your audit.
