@@ -329,7 +329,6 @@ def build_cmd(prompt: str, add_dirs: list[str] | None = None,
         cmd += ["--model", str(chosen)]
     for d in add_dirs or []:
         cmd += ["--add-dir", d]
-    cmd += extra or []
     return cmd
 
 

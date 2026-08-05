@@ -177,3 +177,38 @@ class CanonicalHarnessJson(unittest.TestCase):
     def test_ends_with_a_trailing_newline(self):
         self.assertTrue(self._canonical(
             '{"project":"P","problem":"t","theorems":["a"]}').endswith("\n"))
+
+
+class AgentCommandConstruction(unittest.TestCase):
+    """build_cmd is what actually launches every agent, but nothing else in the
+    suite touches it — a dead-code removal once left a reference to a deleted
+    parameter here, and every invocation on the default CLI raised NameError
+    until someone ran the pipeline. These tests are the smoke alarm."""
+
+    def test_claude_command_is_constructible(self):
+        cmd = F.build_cmd("do the thing")
+        self.assertIn("do the thing", cmd)
+        self.assertIn("-p", cmd)
+
+    def test_codex_command_is_constructible(self):
+        saved = F.AGENT_CLI
+        try:
+            F.AGENT_CLI = "codex"
+            cmd = F.build_cmd("do the thing")
+            self.assertEqual(cmd[1], "exec")
+            self.assertIn("do the thing", cmd)
+        finally:
+            F.AGENT_CLI = saved
+
+    def test_optional_arguments_are_threaded_through(self):
+        cmd = F.build_cmd("p", add_dirs=["/ref"], model="some-model",
+                          output_format="json")
+        self.assertIn("/ref", cmd)
+        self.assertIn("some-model", cmd)
+        self.assertIn("json", cmd)
+
+    def test_every_element_is_a_string(self):
+        """subprocess rejects a non-string argv entry at launch time."""
+        for cmd in (F.build_cmd("p"),
+                    F.build_cmd("p", add_dirs=["/a", "/b"], model="m")):
+            self.assertTrue(all(isinstance(part, str) for part in cmd), cmd)
