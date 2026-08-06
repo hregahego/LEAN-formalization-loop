@@ -179,6 +179,19 @@ class CanonicalHarnessJson(unittest.TestCase):
     def test_ends_with_a_trailing_newline(self):
         self.assertTrue(self._canonical(
             '{"project":"P","problem":"t","theorems":["a"]}').endswith("\n"))
+    def test_mathematical_notation_survives_unescaped(self):
+        """The problem title routinely contains real mathematics. Escaping it to
+        \\u03b8 is valid JSON but unreadable to someone auditing a run."""
+        out = self._canonical(json.dumps(
+            {"project": "P", "problem": "θ_n : Int(D)^⊗n → Int(D^n)",
+             "theorems": ["a"]}))
+        self.assertIn("θ_n", out)
+        self.assertNotIn("\\u03b8", out)
+
+    def test_unicode_still_round_trips(self):
+        out = self._canonical(json.dumps(
+            {"project": "P", "problem": "θ ⊗ →", "theorems": ["a"]}))
+        self.assertEqual(json.loads(out)["problem"], "θ ⊗ →")
 
 
 class AgentCommandConstruction(unittest.TestCase):

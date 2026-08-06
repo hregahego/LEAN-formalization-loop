@@ -147,7 +147,11 @@ def write_harness_json(target: str, project: str, problem: str,
         config["mandatory_axioms"] = list(mandatory)
     path = os.path.join(target, "scripts", "harness.json")
     with open(path, "w", encoding="utf-8") as fh:
-        json.dump(config, fh, indent=2)
+        # ensure_ascii=False: the problem title routinely contains real
+        # mathematics (θ, ⊗, →). Escaping it to \u03b8 is still valid JSON and
+        # still deterministic, but this file is read by humans auditing a
+        # published run, and the escaped form is unreadable.
+        json.dump(config, fh, indent=2, ensure_ascii=False)
         fh.write("\n")
 
 
