@@ -141,3 +141,53 @@ class LedgerDurability(unittest.TestCase):
         # ...and the stall guard cannot fire on an empty history, which is why
         # the warning matters: the operator has to know the window reset.
         self.assertFalse(S.stalled_for(S.read_ledger(d), 16))
+
+
+class LedgerRejectsNonCounts(unittest.TestCase):
+    """A local named `signal` once shadowed the stdlib module of that name, and
+    the module itself reached json.dump — surfacing as a TypeError six frames
+    deep in the encoder, naming neither the caller nor the value. The ledger now
+    refuses anything that is not a count, at the boundary."""
+
+    def test_rejects_a_module(self):
+        import signal as stdlib_signal
+        d = tempfile.mkdtemp()
+        os.makedirs(os.path.join(d, "logs", "orchestration"))
+        with self.assertRaises(TypeError) as caught:
+            S.record_progress(d, 1, stdlib_signal)
+        self.assertIn("expected an int", str(caught.exception))
+
+    def test_rejects_a_string(self):
+        d = tempfile.mkdtemp()
+        os.makedirs(os.path.join(d, "logs", "orchestration"))
+        with self.assertRaises(TypeError):
+            S.record_progress(d, 1, "3")
+
+    def test_accepts_a_count(self):
+        d = tempfile.mkdtemp()
+        os.makedirs(os.path.join(d, "logs", "orchestration"))
+        self.assertEqual(S.record_progress(d, 1, 0)[0]["signal"], 0)
+
+
+class LoopStallGuardPath(unittest.TestCase):
+    """Mirror the sequence loop.py runs after each review. This is the path that
+    crashed on iteration 1 of the first real run."""
+
+    def test_one_iteration_of_the_guard_sequence(self):
+        import loop
+        d = tempfile.mkdtemp()
+        os.makedirs(os.path.join(d, "logs", "orchestration"))
+        os.makedirs(os.path.join(d, "scripts"))
+        with open(os.path.join(d, "scripts", "harness.json"), "w") as fh:
+            fh.write('{"project": "P", "theorems": ["a", "b"]}')
+        with open(os.path.join(d, "PROGRESS.md"), "w") as fh:
+            fh.write("## x\nAgent: agent-iter1-1\nNext: attack `crux`\n")
+
+        discharged = S.progress_signal(d)
+        ledger = S.record_progress(d, 1, discharged)
+        n_frozen = len(S.frozen_theorem_names(d))
+        self.assertEqual((discharged, n_frozen), (0, 2))
+        self.assertFalse(S.stalled_for(ledger, loop.STALL_WINDOW))
+        self.assertIsNone(
+            S.recurring_crux(os.path.join(d, "PROGRESS.md"),
+                             loop.CRUX_RECUR_LIMIT, since_iteration=0))

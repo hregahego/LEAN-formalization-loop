@@ -113,6 +113,11 @@ def read_ledger(target: str) -> list[dict]:
 def record_progress(target: str, n: int, signal: int) -> list[dict]:
     """Append (iteration, signal) to the ledger and persist it. Idempotent per n:
     a re-run of iteration n overwrites its prior entry rather than duplicating."""
+    if not isinstance(signal, int) or isinstance(signal, bool):
+        raise TypeError(
+            f"record_progress expected an int discharged-count, got "
+            f"{type(signal).__name__}. (A local named `signal` once shadowed the "
+            f"stdlib module of that name, and the module reached json.dump.)")
     ledger = [e for e in read_ledger(target) if e.get("iteration") != n]
     ledger.append({"iteration": n, "signal": signal, "at": utc_now()})
     ledger.sort(key=lambda e: e.get("iteration", 0))

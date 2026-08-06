@@ -423,10 +423,10 @@ def main() -> int:
         # and stop if it has flat-lined, or if a single crux keeps being named as
         # the next step while nothing closes it.
         discharged = S.progress_signal(target)
-        ledger = S.record_progress(target, n, signal)
+        ledger = S.record_progress(target, n, discharged)
         n_frozen = len(S.frozen_theorem_names(target))
         F.log(f"loop: progress signal after iteration {n}: "
-              f"{signal}/{n_frozen} frozen theorems discharged in Solution.lean")
+              f"{discharged}/{n_frozen} frozen theorems discharged in Solution.lean")
 
         # Recurrence guard: count only cruxes circled SINCE this run started, so a
         # wall resolved between runs does not re-fire from append-only history.
@@ -434,7 +434,7 @@ def main() -> int:
                                 CRUX_RECUR_LIMIT, since_iteration=resume_baseline)
         if S.stalled_for(ledger, STALL_WINDOW):
             F.log(f"loop: STALLED — no new frozen theorem discharged in the last "
-                  f"{STALL_WINDOW} iterations (signal stuck at {signal}/{n_frozen}). "
+                  f"{STALL_WINDOW} iterations (stuck at {discharged}/{n_frozen}). "
                   "The loop is producing scaffolding without net progress.")
             if crux:
                 F.log(f"loop: since this run started, the crux `{crux[0]}` has been "
