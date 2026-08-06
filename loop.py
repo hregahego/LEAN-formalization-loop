@@ -66,6 +66,7 @@ import subprocess
 import sys
 
 import formlib as F
+import signals as S
 
 
 # --------------------------------------------------------------------------- #
@@ -329,8 +330,8 @@ def main() -> int:
                 # DONE), or the Plan agent hit a wall it cannot get past (STUCK).
                 # Distinguish them by the objective progress signal, so a finished
                 # run is reported COMPLETE instead of being mislabeled as stuck.
-                discharged = F.progress_signal(target)
-                n_frozen = len(F.frozen_theorem_names(target))
+                discharged = S.progress_signal(target)
+                n_frozen = len(S.frozen_theorem_names(target))
                 if n_frozen > 0 and discharged >= n_frozen:
                     # DONE: all frozen theorems are discharged in Solution.lean.
                     # Confirm with a full-project audit, then report COMPLETE.
@@ -421,17 +422,17 @@ def main() -> int:
         # ONLY thing that matters — frozen theorems discharged in Solution.lean —
         # and stop if it has flat-lined, or if a single crux keeps being named as
         # the next step while nothing closes it.
-        discharged = F.progress_signal(target)
-        ledger = F.record_progress(target, n, signal)
-        n_frozen = len(F.frozen_theorem_names(target))
+        discharged = S.progress_signal(target)
+        ledger = S.record_progress(target, n, signal)
+        n_frozen = len(S.frozen_theorem_names(target))
         F.log(f"loop: progress signal after iteration {n}: "
               f"{signal}/{n_frozen} frozen theorems discharged in Solution.lean")
 
         # Recurrence guard: count only cruxes circled SINCE this run started, so a
         # wall resolved between runs does not re-fire from append-only history.
-        crux = F.recurring_crux(os.path.join(target, "PROGRESS.md"),
+        crux = S.recurring_crux(os.path.join(target, "PROGRESS.md"),
                                 CRUX_RECUR_LIMIT, since_iteration=resume_baseline)
-        if F.stalled_for(ledger, STALL_WINDOW):
+        if S.stalled_for(ledger, STALL_WINDOW):
             F.log(f"loop: STALLED — no new frozen theorem discharged in the last "
                   f"{STALL_WINDOW} iterations (signal stuck at {signal}/{n_frozen}). "
                   "The loop is producing scaffolding without net progress.")

@@ -64,6 +64,15 @@ that is the formalization, and it is the point of the project.
 If you change the harness, change it in `reference/scripts/verify.py`. Editing a
 generated project's copy will be flagged by the control-file manifest.
 
+## Where things live
+
+- `formlib.py` — plumbing every stage shares: config, prompt loading, control-file
+  integrity, launching an agent.
+- `signals.py` — how much of the formalization is discharged and whether it has
+  stalled. Read from `scripts/harness.json` and `Solution.lean`, never from an
+  agent's claims. Used only by `loop.py`.
+- `reference/scripts/verify.py` — the harness. See the section above.
+
 ## Style
 
 `ruff check .` — configured in `pyproject.toml`. Match the surrounding code;

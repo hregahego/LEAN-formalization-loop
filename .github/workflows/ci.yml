@@ -26,7 +26,7 @@ jobs:
       - name: Harness compiles
         run: python -m compileall -q reference/scripts/verify.py
       - name: Scripts compile
-        run: python -m compileall -q formlib.py setup.py init.py loop.py
+        run: python -m compileall -q formlib.py signals.py setup.py init.py loop.py
 
   lint:
     runs-on: ubuntu-latest
