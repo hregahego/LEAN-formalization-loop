@@ -117,14 +117,19 @@ def main() -> int:
     F.log(f"init: executing Step -1 in {target}")
     F.log(f"init: timeout is {F.INIT_TIMEOUT}s (a cold Mathlib build can be slow)")
 
+    log_dir = os.path.join(target, "logs", "orchestration")
     result = F.run_agent(
         "init-step-minus1", F.load_prompt("init_step_minus1"), cwd=target,
         model=args.model,
         timeout=F.INIT_TIMEOUT,
-        log_dir=os.path.join(target, "logs", "orchestration"),
+        log_dir=log_dir,
         dry_run=args.dry_run,
     )
-    log_dir = os.path.join(target, "logs", "orchestration")
+    if not result.ok:
+        # Not fatal on its own — the pins check below is the real gate — but say
+        # WHY, so a timeout is not reported as "the agent wrote no pins".
+        F.log(f"init: the Step -1 agent did not exit cleanly "
+              f"({'timeout' if result.timed_out else f'exit {result.returncode}'}).")
 
     if args.dry_run:
         F.run_agent("init-faithfulness-review", F.load_prompt("init_faithfulness_review"),

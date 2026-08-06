@@ -542,7 +542,7 @@ def extract_trailer(text: str) -> dict | None:
         return None
 
 
-def plan_active_agents(result: "AgentResult", tasks_path: str, n: int) -> list[int]:
+def plan_active_agents(result: AgentResult, tasks_path: str, n: int) -> list[int]:
     """
     Active workers for iteration n: trust the Plan agent's trailer first (if it
     is for THIS iteration), else fall back to the iteration-scoped TASKS.md parse.
@@ -556,7 +556,7 @@ def plan_active_agents(result: "AgentResult", tasks_path: str, n: int) -> list[i
     return active_agents(tasks_path, n)
 
 
-def review_verdict(result: "AgentResult", review_path: str, n: int) -> str | None:
+def review_verdict(result: AgentResult, review_path: str, n: int) -> str | None:
     """
     Verdict for iteration n: trust the Review agent's trailer first (if it is for
     THIS iteration), else fall back to the iteration-scoped REVIEW.md parse.

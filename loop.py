@@ -176,10 +176,10 @@ def verify_digest(issues: int, output: str) -> str:
     if output.startswith("[dry-run]"):
         return output.strip()
     lines = output.splitlines()
-    headers = [l for l in lines if l.startswith("--- Check")]
-    fails = [l for l in lines if l.startswith(("FAIL:", "ERROR"))]
-    result = [l for l in lines if l.startswith("=== RESULT")]
-    n_pass = sum(1 for l in lines if l.startswith("PASS:"))
+    headers = [line for line in lines if line.startswith("--- Check")]
+    fails = [line for line in lines if line.startswith(("FAIL:", "ERROR"))]
+    result = [line for line in lines if line.startswith("=== RESULT")]
+    n_pass = sum(1 for line in lines if line.startswith("PASS:"))
     out = list(headers)
     if fails:
         out.append("")

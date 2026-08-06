@@ -125,7 +125,7 @@ class VerifyDigest(unittest.TestCase):
         self.assertIn("=== RESULT", d)
 
     def test_caps_runaway_failure_lists(self):
-        out = "\n".join("FAIL: t%d" % i for i in range(60))
+        out = "\n".join(f"FAIL: t{i}" for i in range(60))
         self.assertIn("20 more FAIL line(s)", loop.verify_digest(1, out))
 
     def test_reports_that_the_harness_did_not_run(self):

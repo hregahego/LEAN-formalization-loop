@@ -42,7 +42,7 @@ def _project(theorems=("t_one",), allowed="", pins=None, sources=None,
         _write(os.path.join(root, "P", name), body)
     if pins is None:
         pins = "".join(
-            "%s  P/%s\n" % (verify.sha256_of(os.path.join(root, "P", f)), f)
+            f"{verify.sha256_of(os.path.join(root, 'P', f))}  P/{f}\n"
             for f in ("Defs.lean", "Theorems.lean"))
     _write(os.path.join(root, "scripts", "frozen.sha256"), pins)
     return root
@@ -125,7 +125,7 @@ class FrozenPins(unittest.TestCase):
         root = _project()
         digest = verify.sha256_of(os.path.join(root, "P", "Defs.lean"))
         _write(os.path.join(root, "scripts", "frozen.sha256"),
-               "%s  P/Defs.lean\n" % digest)
+               f"{digest}  P/Defs.lean\n")
         failures = verify.check_frozen_pins(verify.Harness(root), _silent)
         self.assertTrue(any("Theorems.lean is NOT pinned" in f for f in failures))
 
