@@ -4,6 +4,8 @@ The harness and the files that configure it live in the workspace the worker
 agents edit. These tests pin the property that matters: a change to any of them
 is detected, and "could not verify" never reads as "verified".
 """
+import contextlib
+import io
 import json
 import os
 import sys
@@ -212,3 +214,48 @@ class AgentCommandConstruction(unittest.TestCase):
         for cmd in (F.build_cmd("p"),
                     F.build_cmd("p", add_dirs=["/a", "/b"], model="m")):
             self.assertTrue(all(isinstance(part, str) for part in cmd), cmd)
+
+
+class AgentLaunchSignatures(unittest.TestCase):
+    """Smoke-test the launch path itself, in --dry-run so nothing is spawned.
+
+    build_cmd having tests was not enough: a parameter was removed from it but
+    left in run_agent's signature and forwarding call, so every caller failed
+    with TypeError while build_cmd's own tests passed. These mirror the real
+    call shapes in setup.py, init.py and loop.py.
+    """
+
+    def setUp(self):
+        self._stdout = contextlib.redirect_stdout(io.StringIO())
+        self._stdout.__enter__()
+
+    def tearDown(self):
+        self._stdout.__exit__(None, None, None)
+
+    def test_setup_architect_shape(self):
+        r = F.run_agent("setup-architect", "prompt", cwd="/tmp",
+                        add_dirs=["/ref"], model=None,
+                        timeout=60, log_dir=None, dry_run=True)
+        self.assertTrue(r.ok)
+
+    def test_init_shapes(self):
+        for fmt in ("text", "json"):
+            with self.subTest(fmt):
+                r = F.run_agent("init-step", "prompt", cwd="/tmp", model=None,
+                                timeout=60, log_dir=None, dry_run=True,
+                                output_format=fmt)
+                self.assertTrue(r.ok)
+
+    def test_loop_plan_and_review_shape(self):
+        r = F.run_agent("iter001-plan", "prompt", cwd="/tmp", model=None,
+                        timeout=60, log_dir=None, dry_run=True,
+                        output_format="json")
+        self.assertTrue(r.ok)
+
+    def test_parallel_worker_shape(self):
+        specs = [dict(label=f"iter001-worker{k}", prompt="p", cwd="/tmp",
+                      model=None, timeout=60, log_dir=None, dry_run=True)
+                 for k in (1, 2)]
+        results = F.run_agents_parallel(specs, max_workers=2)
+        self.assertEqual(len(results), 2)
+        self.assertTrue(all(r.ok for r in results))

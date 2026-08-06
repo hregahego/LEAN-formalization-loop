@@ -381,7 +381,6 @@ def parse_json_result(raw: str) -> str:
 def run_agent(label: str, prompt: str, cwd: str, *,
               add_dirs: list[str] | None = None,
               model: str | None = None,
-              extra: list[str] | None = None,
               timeout: int | None = None,
               log_dir: str | None = None,
               dry_run: bool = False,
@@ -396,7 +395,7 @@ def run_agent(label: str, prompt: str, cwd: str, *,
                              the <<<ORCH …>>> control trailer). stderr is kept
                              separate so it cannot corrupt the JSON.
     """
-    cmd = build_cmd(prompt, add_dirs=add_dirs, model=model, extra=extra,
+    cmd = build_cmd(prompt, add_dirs=add_dirs, model=model,
                     output_format=output_format)
 
     if dry_run:
