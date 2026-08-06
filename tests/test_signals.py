@@ -97,3 +97,47 @@ class RecurringCruxBlindness(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LedgerDurability(unittest.TestCase):
+    """The stall guard's entire memory is this file. A partial write reads as
+    "no history", which silently resets the window — so a run circling a wall
+    would look freshly started and the guard would never fire."""
+
+    def _target(self):
+        d = tempfile.mkdtemp()
+        os.makedirs(os.path.join(d, "logs", "orchestration"))
+        return d
+
+    def test_records_and_reads_back(self):
+        d = self._target()
+        S.record_progress(d, 1, 3)
+        S.record_progress(d, 2, 5)
+        self.assertEqual([e["signal"] for e in S.read_ledger(d)], [3, 5])
+
+    def test_rerunning_an_iteration_overwrites_rather_than_duplicates(self):
+        d = self._target()
+        S.record_progress(d, 1, 3)
+        S.record_progress(d, 1, 4)
+        ledger = S.read_ledger(d)
+        self.assertEqual(len(ledger), 1)
+        self.assertEqual(ledger[0]["signal"], 4)
+
+    def test_no_partial_file_is_left_behind(self):
+        """The write goes to a temp path and is renamed into place."""
+        d = self._target()
+        S.record_progress(d, 1, 3)
+        leftovers = [f for f in os.listdir(os.path.join(d, "logs", "orchestration"))
+                     if f.endswith(".tmp")]
+        self.assertEqual(leftovers, [])
+
+    def test_a_truncated_ledger_is_reported_not_silently_ignored(self):
+        d = self._target()
+        S.record_progress(d, 1, 3)
+        with open(os.path.join(d, "logs", "orchestration",
+                               "progress_ledger.json"), "w") as fh:
+            fh.write('[\n  {\n    "iteration": 1,\n    "signal": ')
+        self.assertEqual(S.read_ledger(d), [])   # degrades safely...
+        # ...and the stall guard cannot fire on an empty history, which is why
+        # the warning matters: the operator has to know the window reset.
+        self.assertFalse(S.stalled_for(S.read_ledger(d), 16))

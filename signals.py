@@ -91,14 +91,23 @@ def _ledger_path(target: str) -> str:
 
 
 def read_ledger(target: str) -> list[dict]:
+    """The recorded (iteration, discharged) history, or [] if there is none.
+
+    A CORRUPT ledger is reported, not swallowed. It silently reads as "no
+    history", which resets the stall window — so a run that has been circling a
+    wall for twenty iterations would look freshly started, and the guard that
+    exists to stop it would never fire.
+    """
     raw = read_text(_ledger_path(target))
     if not raw:
         return []
     try:
         data = json.loads(raw)
-        return data if isinstance(data, list) else []
-    except (ValueError, TypeError):
+    except (ValueError, TypeError) as exc:
+        log(f"warning: {_ledger_path(target)} is unreadable ({exc}). The stall "
+            "window starts over from here; delete the file to silence this.")
         return []
+    return data if isinstance(data, list) else []
 
 
 def record_progress(target: str, n: int, signal: int) -> list[dict]:
@@ -109,8 +118,14 @@ def record_progress(target: str, n: int, signal: int) -> list[dict]:
     ledger.sort(key=lambda e: e.get("iteration", 0))
     path = _ledger_path(target)
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as fh:
+    # Write, then rename. `open(path, "w")` truncates before json.dump streams
+    # into it, so an interrupt mid-write leaves a half-written file — which
+    # read_ledger then treats as no history at all. rename(2) is atomic within a
+    # filesystem, so the ledger is only ever seen whole or untouched.
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
         json.dump(ledger, fh, indent=2)
+    os.replace(tmp, path)
     return ledger
 
 
